@@ -70,6 +70,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 is_monitored=True,
             )
             saved_listing = await tracker_service.listing_repo.get_or_create_listing(listing)
+            is_in_stock = quote.available and (quote.inventory_quantity is None or quote.inventory_quantity > 0)
             await tracker_service.sub_repo.create_or_update_subscription(
                 Subscription(
                     telegram_id=user.id,
@@ -77,7 +78,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     target_price_paise=quote.price_paise or 0,
                     notify_on_restock=True,
                     is_active=True,
-                    alert_rearmed=True,
+                    alert_rearmed=not is_in_stock,
+                    last_alerted_price_paise=quote.price_paise if is_in_stock else None,
                 )
             )
             conf_text = format_amul_tracking_confirmed(
@@ -442,6 +444,7 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 is_monitored=True,
             )
             saved_listing = await tracker_service.listing_repo.get_or_create_listing(listing)
+            is_in_stock = quote.available and (quote.inventory_quantity is None or quote.inventory_quantity > 0)
             saved_sub = await tracker_service.sub_repo.create_or_update_subscription(
                 Subscription(
                     telegram_id=update.effective_user.id,
@@ -449,7 +452,8 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     target_price_paise=quote.price_paise or 0,
                     notify_on_restock=True,
                     is_active=True,
-                    alert_rearmed=True,
+                    alert_rearmed=not is_in_stock,
+                    last_alerted_price_paise=quote.price_paise if is_in_stock else None,
                 )
             )
             conf_text = format_amul_tracking_confirmed(

@@ -106,6 +106,11 @@ class AmulProvider(BaseProvider):
         self._session_created_at = now
         return tid
 
+    def invalidate_session(self) -> None:
+        """Force session TID refresh on next API request."""
+        self._session_tid = None
+        self._session_created_at = 0
+
     async def get_substore_for_pincode(self, pincode: str, client: httpx.AsyncClient) -> str:
         """Resolve delivery pincode to internal Amul warehouse/substore alias."""
         clean_pin = pincode.strip()
@@ -212,6 +217,13 @@ class AmulProvider(BaseProvider):
             )
             url = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
             resp = await client.get(url, headers=headers)
+            if resp.status_code in (401, 403):
+                logger.warning("Amul session expired (HTTP 401/403), re-establishing session...", status=resp.status_code)
+                self.invalidate_session()
+                tid = await self._ensure_session(client)
+                headers = {**DEFAULT_HEADERS, "tid": self.calculate_tid_header(tid)}
+                resp = await client.get(url, headers=headers)
+
             if resp.status_code != 200:
                 raise ExtractionError(f"HTTP {resp.status_code} fetching Amul category {category_id}")
 
@@ -332,6 +344,13 @@ class AmulProvider(BaseProvider):
             )
             url_api = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
             resp = await client.get(url_api, headers=headers)
+            if resp.status_code in (401, 403):
+                logger.warning("Amul quote session expired (HTTP 401/403), re-establishing...", status=resp.status_code)
+                self.invalidate_session()
+                tid = await self._ensure_session(client)
+                headers = {**DEFAULT_HEADERS, "tid": self.calculate_tid_header(tid)}
+                resp = await client.get(url_api, headers=headers)
+
             if resp.status_code != 200:
                 raise ExtractionError(f"HTTP {resp.status_code} fetching Amul SKU {sku}")
 

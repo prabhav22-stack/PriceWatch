@@ -5,6 +5,7 @@ every 60 seconds with zero additional server or database costs.
 """
 
 import asyncio
+import random
 from datetime import datetime, timezone
 from typing import Any
 
@@ -74,4 +75,7 @@ async def run_amul_poller(
         except Exception as exc:
             logger.error("Unexpected error in Amul poller loop", error=str(exc))
 
-        await asyncio.sleep(interval_seconds)
+        # Add randomized cadence jitter (+/- 4s) to eliminate clockwork bot signatures
+        jitter = random.uniform(-4.0, 4.0)
+        sleep_duration = max(5.0, interval_seconds + jitter)
+        await asyncio.sleep(sleep_duration)
