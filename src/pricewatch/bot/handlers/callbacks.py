@@ -5,6 +5,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from pricewatch.bot.formatters import (
+    format_amul_category_menu,
+    format_amul_category_messages,
     format_amul_category_view,
     format_amul_tracking_confirmed,
     format_stepwise_product_preview,
@@ -119,12 +121,11 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
         # 5. Amul Categories Menu
         if data == "amul_menu":
             user = await tracker_service.get_or_register_user(telegram_id=user_id)
-            pincode_hint = f"📍 Delivery Hub: <code>{user.default_pincode}</code>" if user.default_pincode else "📍 Default Hub: <code>110001</code>"
-            text = (
-                "🥛 <b>Amul Real-Time Stock & Inventory Tracker</b>\n\n"
-                "Pick a category below to browse warehouse inventory and set 1-click restock alerts:\n\n"
-                f"{pincode_hint}"
-            )
+            pincode = user.default_pincode or "842002"
+            amul_provider = AmulProvider()
+            substore = await amul_provider.resolve_substore_for_pincode(pincode)
+
+            text = format_amul_category_menu(pincode=pincode, substore=substore)
             kb = build_amul_category_keyboard()
             await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
             return
@@ -132,21 +133,48 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
         # 6. Amul Category Product View: amul_cat:<cat_id>
         if data.startswith("amul_cat:"):
             cat_id = data.split(":")[1]
-            cat_info = next((c for c in AMUL_CATEGORIES if c["id"] == cat_id), {"label": cat_id.title()})
+            cat_info = next(
+                (c for c in AMUL_CATEGORIES if c["id"] == cat_id),
+                {"label": cat_id.title(), "emoji": "💪"},
+            )
 
             user = await tracker_service.get_or_register_user(telegram_id=user_id)
-            pincode = user.default_pincode or "110001"
+            pincode = user.default_pincode or "842002"
 
             amul_provider = AmulProvider()
             substore = await amul_provider.resolve_substore_for_pincode(pincode)
-            products = await amul_provider.fetch_category_products(cat_id, pincode=pincode)
+            # Fetch ALL category products (limit=100) so none are ever missing
+            products = await amul_provider.fetch_category_products(cat_id, pincode=pincode, limit=100)
 
             user_subs = await tracker_service.list_user_subscriptions(user_id)
             tracked_skus = {s[1].external_variant_id for s in user_subs if s[1].provider_code == "amul"}
+            bot_username = context.bot.username or "wheypricewatch_bot"
 
-            text = format_amul_category_view(cat_info["label"], pincode, substore, products)
-            kb = build_amul_product_stock_keyboard(products, tracked_skus)
-            await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            messages = format_amul_category_messages(
+                category_label=cat_info["label"],
+                category_emoji=cat_info.get("emoji", "💪"),
+                pincode=pincode,
+                substore=substore,
+                products=products,
+                tracked_skus=tracked_skus,
+                bot_username=bot_username,
+            )
+
+            # Edit the original message with the first block
+            await query.edit_message_text(
+                messages[0],
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+
+            # Deliver subsequent chunked messages so all 24+ items are cleanly shown
+            for chunk in messages[1:]:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=chunk,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
             return
 
         # 7. Amul 1-Click Track: amul_track:<sku>

@@ -5,6 +5,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from pricewatch.bot.formatters import (
+    format_amul_category_menu,
     format_amul_tracking_confirmed,
     format_help_message,
     format_stepwise_product_preview,
@@ -31,17 +32,75 @@ _PINCODE_REGEX = re.compile(r"^\d{6}$")
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /start command."""
+    """Handle /start command, including deeplinks like /start track_<sku> and /start untrack_<sku>."""
     if not update.effective_user or not update.effective_message:
         return
 
     tracker_service: TrackerService = context.bot_data["tracker_service"]
     user = update.effective_user
-    await tracker_service.get_or_register_user(
+    db_user = await tracker_service.get_or_register_user(
         telegram_id=user.id,
         username=user.username,
         first_name=user.first_name,
     )
+
+    # Check for deeplink payload: e.g. /start track_WPCCP01_01
+    if context.args:
+        payload = context.args[0].strip()
+        if payload.startswith("track_") or payload.startswith("fav_"):
+            sku = payload.replace("track_", "").replace("fav_", "")
+            pincode = db_user.default_pincode or "842002"
+            provider = AmulProvider()
+            quote = await provider.fetch_quote("", sku, sku, pincode=pincode)
+
+            listing = CanonicalListing(
+                provider_code="amul",
+                provider_tier=1,
+                external_product_id=sku,
+                external_variant_id=sku,
+                pincode=pincode,
+                canonical_url=f"https://shop.amul.com/en/browse/product/{sku}",
+                product_title=quote.raw_variant_title or sku,
+                variant_title="Standard Pack",
+                currency="INR",
+                last_price_paise=quote.price_paise,
+                last_mrp_paise=quote.mrp_paise,
+                last_available=quote.available,
+                inventory_quantity=quote.inventory_quantity,
+                is_monitored=True,
+            )
+            saved_listing = await tracker_service.listing_repo.get_or_create_listing(listing)
+            await tracker_service.sub_repo.create_or_update_subscription(
+                Subscription(
+                    telegram_id=user.id,
+                    listing_id=saved_listing.id,
+                    target_price_paise=quote.price_paise or 0,
+                    notify_on_restock=True,
+                    is_active=True,
+                    alert_rearmed=True,
+                )
+            )
+            conf_text = format_amul_tracking_confirmed(
+                saved_listing.product_title,
+                sku,
+                pincode,
+                quote.available,
+                quote.inventory_quantity or 0,
+            )
+            kb = build_listing_card_keyboard(saved_listing.id)
+            await update.effective_message.reply_html(conf_text, reply_markup=kb)
+            return
+
+        if payload.startswith("untrack_"):
+            sku = payload.replace("untrack_", "")
+            subs = await tracker_service.list_user_subscriptions(user.id)
+            match = next((s for s in subs if s[1].provider_code == "amul" and s[1].external_variant_id == sku), None)
+            if match:
+                await tracker_service.untrack_product(user.id, match[1].id)
+                await update.effective_message.reply_html(f"🗑️ Stopped tracking stock for Amul <code>{sku}</code>.")
+            else:
+                await update.effective_message.reply_html(f"❌ Item <code>{sku}</code> not found in your tracking list.")
+            return
 
     text = format_welcome_message(user.first_name or "there")
     await update.effective_message.reply_html(text)
@@ -205,7 +264,7 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def amul_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /amul command to browse and track Amul protein products."""
+    """Handle /products or /amul command to browse and track Amul protein products."""
     if not update.effective_user or not update.effective_message:
         return
 
@@ -215,16 +274,11 @@ async def amul_command_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         username=update.effective_user.username,
         first_name=update.effective_user.first_name,
     )
-    pincode_hint = (
-        f"📍 <i>Delivery Hub: <code>{user.default_pincode}</code></i>"
-        if user.default_pincode
-        else "📍 <i>Using standard hub (110001). Set yours anytime with <code>/pincode 110001</code></i>"
-    )
-    text = (
-        "🥛 <b>Amul Real-Time Stock & Inventory Tracker</b>\n\n"
-        "Pick a category below to browse warehouse inventory and set 1-click restock alerts:\n\n"
-        f"{pincode_hint}"
-    )
+    pincode = user.default_pincode or "842002"
+    amul_provider = AmulProvider()
+    substore = await amul_provider.resolve_substore_for_pincode(pincode)
+
+    text = format_amul_category_menu(pincode=pincode, substore=substore)
     kb = build_amul_category_keyboard()
     await update.effective_message.reply_html(text, reply_markup=kb)
 

@@ -116,3 +116,46 @@ def test_amul_formatters():
     assert "lassi-01" in conf
     assert "40 units" in conf
 
+
+def test_amul_category_messages_and_rendering():
+    from pricewatch.bot.formatters import (
+        format_amul_category_menu,
+        format_amul_category_messages,
+        render_amul_product_item,
+    )
+    menu = format_amul_category_menu("842002", "bihar")
+    assert "Amul Products" in menu
+    assert "(842002 - bihar)" in menu
+
+    product = {
+        "name": "Amul High Protein Buttermilk, 200 mL | Pack of 30",
+        "sku": "BTMCP11_30",
+        "price_paise": 79900,
+        "available": True,
+        "inventory_quantity": 723,
+        "protein": "15g protein",
+    }
+    rendered = render_amul_product_item(product, 1, is_tracked=False, bot_username="wheypricewatch_bot")
+    assert "1. <b><a href=" in rendered
+    assert "Protein: <b>15g protein</b>" in rendered
+    assert "Price: <b>799₹</b>" in rendered
+    assert "In Stock: <b>Yes 🟢</b>" in rendered
+    assert "Available Quantity: <b>723</b>" in rendered
+    assert "[Track]" in rendered
+    assert "start=track_BTMCP11_30" in rendered
+
+    msgs = format_amul_category_messages(
+        category_label="Protein",
+        category_emoji="💪",
+        pincode="842002",
+        substore="bihar",
+        products=[product] * 5,
+        tracked_skus={"BTMCP11_30"},
+        bot_username="wheypricewatch_bot",
+    )
+    assert len(msgs) >= 1
+    assert "Amul 💪 Protein Products" in msgs[0]
+    assert "(842002 - bihar)" in msgs[0]
+    assert "[Untrack]" in msgs[0]
+
+

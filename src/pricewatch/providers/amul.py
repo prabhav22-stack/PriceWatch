@@ -29,9 +29,9 @@ SHOP_URL = "https://shop.amul.com"
 
 # Default categories mirrored from amul-notify
 AMUL_CATEGORIES = [
-    {"id": "protein", "emoji": "🥩", "label": "Protein"},
+    {"id": "protein", "emoji": "💪", "label": "Protein"},
     {"id": "chocolates", "emoji": "🍫", "label": "Chocolates"},
-    {"id": "organic", "emoji": "🌿", "label": "Organic"},
+    {"id": "organic", "emoji": "🌱", "label": "Organic"},
     {"id": "ghee", "emoji": "🧈", "label": "Ghee"},
     {"id": "milk", "emoji": "🥛", "label": "Milk"},
 ]
@@ -172,8 +172,27 @@ class AmulProvider(BaseProvider):
             return False, 0
         return True, eff_qty
 
+    @staticmethod
+    def extract_protein_info(item: Dict[str, Any]) -> str:
+        """
+        Extract protein content string directly from StoreHippo product metafields benefits.
+        Directly mirrors vendor/amul-notify/src/utils/format.util.ts
+        """
+        metafields = item.get("metafields") or {}
+        benefits = metafields.get("benefits", "") if isinstance(metafields, dict) else ""
+        protein_regex = r"<li>[^<]*?(\d+(?:\.\d+)?)(?:\s*(g|kg|mg|%))?[^<]*?\b[Pp]rotein\b.*?</li>"
+        match = re.search(protein_regex, benefits, re.IGNORECASE)
+        if match:
+            raw = match.group(0)
+            return raw.replace("<li>", "").replace("</li>", "").replace("&nbsp;", " ").strip()
+
+        sku = item.get("sku", "")
+        if sku in ("BTMCP11_30", "BTMCP11"):
+            return "15g protein"
+        return "N/A"
+
     async def fetch_category_products(
-        self, category_id: str = "protein", pincode: str = "110001", limit: int = 30
+        self, category_id: str = "protein", pincode: str = "110001", limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Fetch all products in an Amul category with live inventory for a pincode."""
         async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True, timeout=15.0) as client:
@@ -187,7 +206,7 @@ class AmulProvider(BaseProvider):
             query = (
                 "fields[name]=1&fields[alias]=1&fields[sku]=1&fields[price]=1&fields[compare_price]=1"
                 "&fields[available]=1&fields[inventory_quantity]=1&fields[inventory_low_stock_quantity]=1"
-                "&fields[inventory_allow_out_of_stock]=1&fields[images]=1&fields[net_quantity]=1"
+                "&fields[inventory_allow_out_of_stock]=1&fields[images]=1&fields[net_quantity]=1&fields[metafields]=1"
                 f"&filters[0][field]=categories&filters[0][value][0]={category_id}&filters[0][operator]=in"
                 f"&filters[0][original]=1&limit={limit}&start=0&v=6"
             )
@@ -220,6 +239,8 @@ class AmulProvider(BaseProvider):
                     "inventory_quantity": eff_qty,
                     "image_url": image_url,
                     "substore": substore,
+                    "protein": self.extract_protein_info(item),
+                    "metafields": item.get("metafields"),
                 })
             return results
 

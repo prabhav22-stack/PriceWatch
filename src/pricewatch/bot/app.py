@@ -55,6 +55,7 @@ def create_telegram_app(
     app.add_handler(CommandHandler("pincode", pincode_handler))
     app.add_handler(CommandHandler("status", status_handler))
     app.add_handler(CommandHandler("amul", amul_command_handler))
+    app.add_handler(CommandHandler("products", amul_command_handler))
     app.add_handler(CommandHandler("history", history_command_handler))
 
     # Catch /untrack_123 and /history_123 shorthand commands

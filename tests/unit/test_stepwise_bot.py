@@ -132,6 +132,7 @@ async def test_amul_command_handler(memory_service):
 
     message.reply_html.assert_called_once()
     text = message.reply_html.call_args[0][0]
-    assert "Amul Real-Time Stock & Inventory Tracker" in text
+    assert "Amul Products" in text
+    assert "Select a category to view products" in text
     kb = message.reply_html.call_args[1]["reply_markup"]
     assert kb is not None

@@ -1,6 +1,6 @@
 """HTML message templates and formatters for Telegram."""
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from pricewatch.domain.models import CanonicalListing, Subscription
 from pricewatch.validation.normalizer import format_paise_to_inr
@@ -129,6 +129,114 @@ def format_subscription_list(items: List[Tuple[Subscription, CanonicalListing]])
     return "\n".join(lines)
 
 
+def format_amul_category_menu(pincode: str = "842002", substore: str = "bihar") -> str:
+    """Format Amul category selector menu header (matches vendor/amul-notify screenshot)."""
+    return (
+        f"<b>Amul Products</b> ({pincode} - {substore})\n\n"
+        "Select a category to view products."
+    )
+
+
+def chunk_text_blocks(
+    blocks: List[str], max_length: int = 3800, separator: str = "\n\n"
+) -> List[str]:
+    """
+    Split text blocks into multiple Telegram messages under 4096 char limit.
+    Directly mirrors chunkTextBlocks in vendor/amul-notify/src/utils/telegram.util.ts
+    """
+    chunks: List[str] = []
+    current_chunk = ""
+
+    for block in blocks:
+        next_chunk = f"{current_chunk}{separator}{block}" if current_chunk else block
+        if current_chunk and len(next_chunk) > max_length:
+            chunks.append(current_chunk)
+            current_chunk = block
+            continue
+        current_chunk = next_chunk
+
+    if current_chunk:
+        chunks.append(current_chunk)
+    return chunks
+
+
+def render_amul_product_item(
+    product: dict,
+    index: int,
+    is_tracked: bool = False,
+    bot_username: str = "wheypricewatch_bot",
+    show_protein: bool = True,
+) -> str:
+    """
+    Render a single Amul product block matching the exact format from the user's screenshot.
+    """
+    sku = product.get("sku") or ""
+    name = product.get("name") or "Amul Product"
+    url = product.get("url") or f"https://shop.amul.com/en/browse/product/{sku}"
+    price_rs = (product.get("price_paise") or 0) // 100
+    is_avail = bool(product.get("available", False))
+    qty = product.get("inventory_quantity", 0)
+    protein = product.get("protein") or "N/A"
+    stock_icon = "🟢" if is_avail else "🔴"
+    stock_text = f"Yes {stock_icon}" if is_avail else f"No {stock_icon}"
+
+    track_url = f"https://t.me/{bot_username}?start=track_{sku}"
+    untrack_url = f"https://t.me/{bot_username}?start=untrack_{sku}"
+    action_link = (
+        f'<b><a href="{untrack_url}">[Untrack]</a></b>'
+        if is_tracked
+        else f'<b><a href="{track_url}">[Track]</a></b>'
+    )
+
+    lines = [
+        f'{index}. <b><a href="{url}">{name}</a></b>',
+    ]
+    if show_protein:
+        lines.append(f"     Protein: <b>{protein}</b>")
+
+    lines.extend([
+        f"     Price: <b>{price_rs}₹</b>",
+        f"     In Stock: <b>{stock_text}</b>",
+        f"     Available Quantity: <b>{qty}</b>",
+        f"{action_link} | <b><a href=\"{track_url}\">[Favourite]</a></b>",
+    ])
+    return "\n".join(lines)
+
+
+def format_amul_category_messages(
+    category_label: str,
+    category_emoji: str,
+    pincode: str,
+    substore: str,
+    products: List[dict],
+    tracked_skus: Set[str],
+    bot_username: str = "wheypricewatch_bot",
+) -> List[str]:
+    """
+    Build clean chunked messages containing ALL products in the category without missing any.
+    """
+    title = f"<b>Amul {category_emoji} {category_label} Products</b> ({pincode} - {substore})"
+    show_protein = category_label.lower() == "protein"
+
+    blocks = [
+        render_amul_product_item(
+            product=p,
+            index=i,
+            is_tracked=p.get("sku") in tracked_skus,
+            bot_username=bot_username,
+            show_protein=show_protein,
+        )
+        for i, p in enumerate(products, 1)
+    ]
+
+    if not blocks:
+        return [f"{title}\n\nNo products found for this category."]
+
+    first_block = f"{title}\n\n{blocks[0]}"
+    all_blocks = [first_block] + blocks[1:]
+    return chunk_text_blocks(all_blocks, max_length=3800)
+
+
 def format_amul_category_view(
     category_label: str, pincode: str, substore: str, products: List[dict]
 ) -> str:
@@ -138,7 +246,7 @@ def format_amul_category_view(
         "",
         "<i>Real-time warehouse inventory:</i>",
     ]
-    for i, p in enumerate(products[:12], 1):
+    for i, p in enumerate(products, 1):
         name = p.get("name", "Product")
         price = p.get("price_paise", 0) / 100.0 if p.get("price_paise") else 0
         avail = p.get("available", False)
