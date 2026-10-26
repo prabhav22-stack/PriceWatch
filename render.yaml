@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: pricewatch
+    env: python
+    plan: free # or starter for zero spin-down
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m pricewatch.entrypoints.web_server
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: WEBHOOK_BASE_URL
+        sync: false
