@@ -25,6 +25,18 @@ def test_asin_extraction():
         AmazonFreshProvider.extract_asin("https://www.amazon.in/alm/storefront/B01FRESH01")
         == "B01FRESH01"
     )
+    assert (
+        AmazonFreshProvider.extract_asin(
+            "https://www.amazon.in/Platinum-Protein-Isolate-Digestive-Supplement/dp/B07WZM3714/ref=sr_1_1_in_f3_wg_fs?almBrandId=ctnow&crid=375LWJ6IIK7TO&dib=eyJ2IjoiMSJ9.lQJb6ToDlWiW0AN-zdMdFEy961lfOB74gADp51poKFN0s_bt_Oj9iLMbkaZLthmPCeNI2h457xisIdTlhsCGrlz4ZfOAwCZthTiUeSuBisvN2kQtYg_Xquq_fZJRGEJPCPcEP0NX7Lc8Yu8CQCCqYMyu47CacdveUESIJ_aIo1FRmRiA3IM_0g1AiYCVWbI3p6DJyzvw27sWUq53EXhijnBPlow6dtbY5Qm46klABCBrXmk8ZHWM8NbB8prw0GLXIU7-HichoY30rPgUjXcGX6t7V7F2W4ltAiyt1pzOwds.KXKfYNlj0jKif6w_6lR_9kLmhk7falYHF8n4qRnP5lQ&dib_tag=se&fpw=alm&keywords=Whey%2Bplatinum&qid=1784029969&s=nowstore&sprefix=whey%2Bplatin%2Cnowstore%2C291&sr=1-1&th=1"
+        )
+        == "B07WZM3714"
+    )
+    assert (
+        AmazonFreshProvider.extract_asin("https://www.amazon.in/gp/aw/d/B07WZM3714?ref=mobile")
+        == "B07WZM3714"
+    )
+    assert AmazonFreshProvider.can_handle("https://amzn.in/d/abcd123")
+    assert AmazonFreshProvider.can_handle("https://amzn.to/xyz987")
 
 
 def test_parse_in_stock_fresh_page():

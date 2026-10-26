@@ -18,7 +18,9 @@ from pricewatch.providers.http_client import http_client
 from pricewatch.validation.normalizer import parse_inr_to_paise
 
 
-_ASIN_REGEX = re.compile(r"/(?:dp|gp/product|alm/storefront)/([A-Z0-9]{10})", re.IGNORECASE)
+_ASIN_REGEX = re.compile(
+    r"/(?:dp|gp/product|gp/aw/d|alm/storefront)/([A-Z0-9]{10})", re.IGNORECASE
+)
 
 
 @ProviderRegistry.register
@@ -32,10 +34,9 @@ class AmazonFreshProvider(BaseProvider):
     def can_handle(cls, url: str) -> bool:
         parsed = urlparse(url)
         domain = (parsed.hostname or "").lower()
-        if "amazon.in" not in domain:
-            return False
-        # Matches Amazon Fresh links or general Amazon.in links
-        return True
+        if "amazon.in" in domain or "amzn.in" in domain or "amzn.to" in domain:
+            return True
+        return False
 
     @staticmethod
     def extract_asin(url: str) -> str:
@@ -144,6 +145,15 @@ class AmazonFreshProvider(BaseProvider):
         return product_title, selling_price_paise, mrp_paise, available, verified_pincode
 
     async def resolve_url(self, url: str, pincode: str = "") -> ResolutionResult:
+        parsed = urlparse(url)
+        domain = (parsed.hostname or "").lower()
+        if "amzn." in domain:
+            try:
+                resp = await http_client.get(url)
+                url = str(resp.url)
+            except Exception:
+                pass
+
         asin = self.extract_asin(url)
         canonical_url = f"https://www.amazon.in/dp/{asin}"
 
