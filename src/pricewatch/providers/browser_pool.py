@@ -27,6 +27,7 @@ class BrowserPool:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled",
                 ],
             )
 
@@ -37,6 +38,8 @@ class BrowserPool:
             )
 
             page = await context.new_page()
+            # Mask headless webdriver detection
+            await page.add_init_script("delete Object.getPrototypeOf(navigator).webdriver")
 
             try:
                 # 1. Navigate directly to target product page
