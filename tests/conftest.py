@@ -38,3 +38,15 @@ def sample_quote() -> PriceQuote:
         seller_name="Nakpro Store",
         raw_variant_title="1 kg / Chocolate",
     )
+
+
+@pytest.fixture(autouse=True)
+async def reset_http_client():
+    from pricewatch.providers.http_client import http_client
+    if http_client._client and not http_client._client.is_closed:
+        await http_client._client.aclose()
+    http_client._client = None
+    yield
+    if http_client._client and not http_client._client.is_closed:
+        await http_client._client.aclose()
+    http_client._client = None

@@ -1,0 +1,29 @@
+{
+  "id": 7891234567,
+  "title": "Nakpro Impact Whey Protein",
+  "handle": "impact-whey-protein",
+  "vendor": "Nakpro Store",
+  "variants": [
+    {
+      "id": 40987654321,
+      "title": "1 kg / Chocolate",
+      "price": 134900,
+      "compare_at_price": 199900,
+      "available": true
+    },
+    {
+      "id": 40987654322,
+      "title": "1 kg / Malai Kulfi",
+      "price": 134900,
+      "compare_at_price": 199900,
+      "available": true
+    },
+    {
+      "id": 40987654323,
+      "title": "2 kg / Chocolate",
+      "price": 249900,
+      "compare_at_price": 369900,
+      "available": false
+    }
+  ]
+}
