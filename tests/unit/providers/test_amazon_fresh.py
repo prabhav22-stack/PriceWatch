@@ -63,3 +63,44 @@ def test_captcha_page_raises_bot_blocked():
 
     with pytest.raises(BotBlockedError):
         AmazonFreshProvider.parse_html_content(html)
+
+
+@pytest.mark.asyncio
+async def test_resolve_url_success_fast_path():
+    provider = AmazonFreshProvider()
+    html_file = FIXTURES_DIR / "amazon_fresh_in_stock.html"
+    with open(html_file, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    with respx.mock(assert_all_called=False) as respx_mock:
+        respx_mock.get("https://www.amazon.in/dp/B08XYZ1234").mock(
+            return_value=httpx.Response(200, text=html)
+        )
+        result = await provider.resolve_url(
+            "https://www.amazon.in/dp/B08XYZ1234", pincode="842002"
+        )
+        assert result.external_product_id == "B08XYZ1234"
+        assert "Amul Taaza" in result.product_title
+        assert len(result.variants) == 1
+        assert result.variants[0].price_paise == 7400
+
+
+@pytest.mark.asyncio
+async def test_resolve_url_fallback_on_captcha_or_error():
+    provider = AmazonFreshProvider()
+    captcha_file = FIXTURES_DIR / "amazon_captcha.html"
+    with open(captcha_file, "r", encoding="utf-8") as f:
+        captcha_html = f.read()
+
+    with respx.mock(assert_all_called=False) as respx_mock:
+        respx_mock.get("https://www.amazon.in/dp/B08XYZ1234").mock(
+            return_value=httpx.Response(200, text=captcha_html)
+        )
+        result = await provider.resolve_url(
+            "https://www.amazon.in/dp/B08XYZ1234", pincode="842002"
+        )
+        # Should gracefully onboard with Tier 4 for browser worker
+        assert result.external_product_id == "B08XYZ1234"
+        assert "Amazon Fresh Product (B08XYZ1234)" in result.product_title
+        assert result.variants[0].price_paise is None
+

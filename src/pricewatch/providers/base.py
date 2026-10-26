@@ -54,8 +54,14 @@ class ProviderRegistry:
         cls._fallback_provider = provider_cls
 
     @classmethod
+    def _ensure_loaded(cls) -> None:
+        if not cls._providers:
+            import pricewatch.providers  # noqa: F401
+
+    @classmethod
     def get_provider_for_url(cls, url: str) -> BaseProvider:
         """Find the matching provider instance for a URL, or return the fallback."""
+        cls._ensure_loaded()
         for provider_cls in cls._providers:
             if provider_cls.can_handle(url):
                 return provider_cls()
@@ -66,6 +72,7 @@ class ProviderRegistry:
     @classmethod
     def get_provider_by_code(cls, code: str) -> BaseProvider:
         """Retrieve a provider instance by its unique provider_code."""
+        cls._ensure_loaded()
         if code in cls._code_map:
             return cls._code_map[code]()
         # If code starts with shopify:

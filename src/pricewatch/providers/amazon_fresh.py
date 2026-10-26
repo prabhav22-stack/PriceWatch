@@ -71,7 +71,7 @@ class AmazonFreshProvider(BaseProvider):
         if glow_node:
             glow_text = glow_node.text(strip=True)
             # Find 6 digit indian pincode in glow text
-            pin_match = re.search(r"\b(\d{6})\b", glow_text)
+            pin_match = re.search(r"(\d{6})", glow_text)
             if pin_match:
                 verified_pincode = pin_match.group(1)
 
@@ -145,29 +145,50 @@ class AmazonFreshProvider(BaseProvider):
 
     async def resolve_url(self, url: str, pincode: str = "") -> ResolutionResult:
         asin = self.extract_asin(url)
-        resp = await http_client.get(url)
-        if resp.status_code != 200:
-            raise ExtractionError(f"HTTP {resp.status_code} fetching Amazon URL: {url}")
-
-        title, price_paise, mrp_paise, available, verified_pincode = self.parse_html_content(
-            resp.text, target_pincode=pincode
-        )
-
         canonical_url = f"https://www.amazon.in/dp/{asin}"
+
+        # Try fast HTTP GET first to grab metadata instantly
+        try:
+            resp = await http_client.get(canonical_url)
+            if resp.status_code == 200 and "Robot Check" not in resp.text:
+                title, price_paise, mrp_paise, available, verified_pincode = self.parse_html_content(
+                    resp.text, target_pincode=pincode
+                )
+                variant = VariantOption(
+                    external_variant_id=asin,
+                    variant_title="Default",
+                    canonical_url=canonical_url,
+                    price_paise=price_paise,
+                    mrp_paise=mrp_paise,
+                    available=available,
+                )
+                return ResolutionResult(
+                    provider_code=self.provider_code,
+                    provider_tier=self.tier,
+                    external_product_id=asin,
+                    product_title=title,
+                    requires_pincode=bool(pincode),
+                    variants=[variant],
+                    pinned_variant_id=asin,
+                )
+        except Exception as exc:
+            pass
+
+        # Graceful fallback: Amazon Fresh items are often hyperlocal / pincode-gated.
+        # Onboard the listing into Tier 4 (BROWSER) so the browser worker checks it.
         variant = VariantOption(
             external_variant_id=asin,
             variant_title="Default",
             canonical_url=canonical_url,
-            price_paise=price_paise,
-            mrp_paise=mrp_paise,
-            available=available,
+            price_paise=None,
+            mrp_paise=None,
+            available=True,
         )
-
         return ResolutionResult(
             provider_code=self.provider_code,
             provider_tier=self.tier,
             external_product_id=asin,
-            product_title=title,
+            product_title=f"Amazon Fresh Product ({asin})",
             requires_pincode=bool(pincode),
             variants=[variant],
             pinned_variant_id=asin,
@@ -180,12 +201,21 @@ class AmazonFreshProvider(BaseProvider):
         external_variant_id: str,
         pincode: str = "",
     ) -> PriceQuote:
-        resp = await http_client.get(canonical_url)
-        if resp.status_code != 200:
-            raise ExtractionError(f"HTTP {resp.status_code} fetching {canonical_url}")
+        html = ""
+        # 1. Try Playwright browser pool if available (required for hyperlocal Amazon Fresh pincode)
+        try:
+            from pricewatch.providers.browser_pool import BrowserPool
+            html = await BrowserPool.fetch_amazon_fresh_page(canonical_url, pincode=pincode)
+        except Exception as exc:
+            logger.warning("Browser fetch failed, falling back to HTTP", error=str(exc))
+            # 2. Fallback to HTTP client
+            resp = await http_client.get(canonical_url)
+            if resp.status_code != 200:
+                raise ExtractionError(f"HTTP {resp.status_code} fetching {canonical_url}")
+            html = resp.text
 
         title, price_paise, mrp_paise, available, verified_pincode = self.parse_html_content(
-            resp.text, target_pincode=pincode
+            html, target_pincode=pincode
         )
 
         return PriceQuote(
@@ -195,7 +225,7 @@ class AmazonFreshProvider(BaseProvider):
             mrp_paise=mrp_paise,
             currency="INR",
             available=available,
-            verified_pincode=verified_pincode,
+            verified_pincode=verified_pincode or pincode,
             extraction_method="amazon_dom",
             raw_variant_title="Default",
         )
