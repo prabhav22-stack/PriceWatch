@@ -1,7 +1,7 @@
 """Alert evaluation service with hysteresis state machine and idempotent Telegram dispatch."""
 
 from datetime import datetime, timezone
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 from pricewatch.config import settings
 from pricewatch.domain.enums import AlertType, NotificationStatus
