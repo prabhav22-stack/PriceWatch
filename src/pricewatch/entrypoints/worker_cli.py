@@ -13,6 +13,7 @@ from pricewatch.domain.models import PriceObservation
 from pricewatch.logging_setup import get_logger, setup_logging
 from pricewatch.repositories.base import BaseListingRepo, BaseSubscriptionRepo
 from pricewatch.repositories.memory_repo import MemoryRepository
+from pricewatch.repositories.supabase_repo import SupabaseRepository
 from pricewatch.services.alert_service import AlertService
 from pricewatch.services.check_orchestrator import CheckOrchestrator
 
@@ -21,7 +22,11 @@ logger = get_logger("worker_cli")
 
 def get_default_repository():
     """Retrieve database repository based on settings or fallback to memory."""
-    # Note: When Supabase/PostgreSQL is connected, will return SupabaseRepository
+    if settings.SUPABASE_URL and (settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN):
+        try:
+            return SupabaseRepository()
+        except Exception as exc:
+            logger.warning("Failed to connect to Supabase, falling back to MemoryRepository", error=str(exc))
     return MemoryRepository()
 
 

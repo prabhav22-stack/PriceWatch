@@ -9,6 +9,7 @@ from pricewatch.bot.app import create_telegram_app
 from pricewatch.config import settings
 from pricewatch.logging_setup import get_logger, setup_logging
 from pricewatch.repositories.memory_repo import MemoryRepository
+from pricewatch.repositories.supabase_repo import SupabaseRepository
 from pricewatch.services.tracker_service import TrackerService
 
 logger = get_logger("web_server")
@@ -25,8 +26,16 @@ def main():
 
     setup_logging(log_level=settings.LOG_LEVEL)
 
-    # Initialize repository and services
-    repo = MemoryRepository()
+    # Initialize repository (Supabase if configured, otherwise MemoryRepository)
+    if settings.SUPABASE_URL and (settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN):
+        try:
+            repo = SupabaseRepository()
+            logger.info("Connected to Supabase PostgreSQL repository")
+        except Exception as exc:
+            logger.warning("Supabase connection failed, falling back to MemoryRepository", error=str(exc))
+            repo = MemoryRepository()
+    else:
+        repo = MemoryRepository()
     tracker_service = TrackerService(
         listing_repo=repo,
         subscription_repo=repo,
