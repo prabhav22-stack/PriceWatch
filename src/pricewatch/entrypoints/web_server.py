@@ -2,8 +2,20 @@
 
 import argparse
 import asyncio
+import json
 import os
 import sys
+from pathlib import Path
+
+# Ensure src/ is in sys.path
+root_dir = Path(__file__).resolve().parents[3]
+src_dir = root_dir / "src"
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+
+import tornado.ioloop
+import tornado.web
+from telegram import Update
 
 from pricewatch.bot.app import create_telegram_app
 from pricewatch.config import settings
@@ -13,6 +25,95 @@ from pricewatch.repositories.supabase_repo import SupabaseRepository
 from pricewatch.services.tracker_service import TrackerService
 
 logger = get_logger("web_server")
+
+
+class HealthHandler(tornado.web.RequestHandler):
+    """Health check endpoint for Render keep-alive and uptime probes."""
+
+    def get(self):
+        self.set_header("Content-Type", "application/json")
+        self.write({"status": "ok", "service": "pricewatch"})
+
+
+class TelegramWebhookHandler(tornado.web.RequestHandler):
+    """Receives HTTPS POST updates from Telegram Bot API."""
+
+    def initialize(self, ptb_app):
+        self.ptb_app = ptb_app
+
+    async def post(self):
+        # Validate secret token header if configured
+        if settings.TELEGRAM_WEBHOOK_SECRET:
+            token = self.request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+            if token != settings.TELEGRAM_WEBHOOK_SECRET:
+                logger.warning("Rejected webhook request with invalid secret token")
+                self.set_status(403)
+                self.write("Forbidden")
+                return
+
+        try:
+            payload = json.loads(self.request.body.decode("utf-8"))
+            update = Update.de_json(data=payload, bot=self.ptb_app.bot)
+            await self.ptb_app.update_queue.put(update)
+            self.set_status(200)
+            self.write("OK")
+        except Exception as exc:
+            logger.error("Failed to process Telegram webhook update", error=str(exc))
+            self.set_status(400)
+            self.write("Bad Request")
+
+
+async def run_server_async(port: int, webhook_url: str) -> None:
+    """Initialize bot, set webhook, and start Tornado HTTP server."""
+    # Initialize repository (Supabase in production, MemoryRepository fallback)
+    if settings.SUPABASE_URL and (settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN):
+        try:
+            repo = SupabaseRepository()
+            logger.info("Connected to Supabase PostgreSQL repository")
+        except Exception as exc:
+            logger.warning("Supabase connection failed, falling back to MemoryRepository", error=str(exc))
+            repo = MemoryRepository()
+    else:
+        repo = MemoryRepository()
+
+    tracker_service = TrackerService(
+        listing_repo=repo,
+        subscription_repo=repo,
+        user_repo=repo,
+    )
+
+    ptb_app = create_telegram_app(tracker_service=tracker_service)
+
+    # Initialize and start PTB Application
+    await ptb_app.initialize()
+    await ptb_app.start()
+
+    # Register webhook with Telegram
+    logger.info("Setting Telegram webhook...", webhook_url=webhook_url)
+    await ptb_app.bot.set_webhook(
+        url=webhook_url,
+        secret_token=settings.TELEGRAM_WEBHOOK_SECRET or None,
+        drop_pending_updates=True,
+    )
+    logger.info("Telegram webhook successfully registered")
+
+    # Configure Tornado HTTP routes
+    tornado_app = tornado.web.Application([
+        (r"/healthz", HealthHandler),
+        (r"/", HealthHandler),
+        (r"/webhook", TelegramWebhookHandler, dict(ptb_app=ptb_app)),
+    ])
+
+    tornado_app.listen(port, address="0.0.0.0")
+    logger.info("PriceWatch HTTP server listening on 0.0.0.0", port=port)
+
+    # Keep running
+    try:
+        await asyncio.Event().wait()
+    finally:
+        logger.info("Shutting down bot and web server...")
+        await ptb_app.stop()
+        await ptb_app.shutdown()
 
 
 def main():
@@ -26,45 +127,21 @@ def main():
 
     setup_logging(log_level=settings.LOG_LEVEL)
 
-    # Initialize repository (Supabase if configured, otherwise MemoryRepository)
-    if settings.SUPABASE_URL and (settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN):
-        try:
-            repo = SupabaseRepository()
-            logger.info("Connected to Supabase PostgreSQL repository")
-        except Exception as exc:
-            logger.warning("Supabase connection failed, falling back to MemoryRepository", error=str(exc))
-            repo = MemoryRepository()
-    else:
-        repo = MemoryRepository()
-    tracker_service = TrackerService(
-        listing_repo=repo,
-        subscription_repo=repo,
-        user_repo=repo,
-    )
-
-    app = create_telegram_app(tracker_service=tracker_service)
-
     port = int(os.getenv("PORT", "8000"))
-    is_polling = args.polling or settings.APP_ENV == "development" and not settings.WEBHOOK_BASE_URL
+    is_polling = args.polling or (settings.APP_ENV == "development" and not settings.WEBHOOK_BASE_URL)
 
     if is_polling:
         logger.info("Starting PriceWatch bot in local long-polling mode...")
+        # Local polling mode
+        repo = SupabaseRepository() if settings.SUPABASE_URL else MemoryRepository()
+        svc = TrackerService(repo, repo, repo)
+        app = create_telegram_app(svc)
         app.run_polling(drop_pending_updates=True)
     else:
-        webhook_url = f"{settings.WEBHOOK_BASE_URL.rstrip('/')}/webhook"
-        logger.info(
-            "Starting PriceWatch bot in webhook mode...",
-            port=port,
-            webhook_url=webhook_url,
-        )
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="/webhook",
-            webhook_url=webhook_url,
-            secret_token=settings.TELEGRAM_WEBHOOK_SECRET or None,
-            drop_pending_updates=True,
-        )
+        webhook_base = settings.WEBHOOK_BASE_URL or f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME', 'localhost')}"
+        webhook_url = f"{webhook_base.rstrip('/')}/webhook"
+        logger.info("Starting PriceWatch in webhook mode", port=port, webhook_url=webhook_url)
+        asyncio.run(run_server_async(port=port, webhook_url=webhook_url))
 
 
 if __name__ == "__main__":
