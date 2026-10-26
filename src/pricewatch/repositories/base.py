@@ -73,6 +73,12 @@ class BaseListingRepo(ABC):
     ) -> List[PriceObservation]:
         """Fetch historical price observations for a listing."""
 
+    @abstractmethod
+    async def get_active_listings_by_provider(
+        self, provider_code: str
+    ) -> List[CanonicalListing]:
+        """Fetch all active and monitored listings for a given provider (e.g. 'amul')."""
+
 
 class BaseSubscriptionRepo(ABC):
     @abstractmethod

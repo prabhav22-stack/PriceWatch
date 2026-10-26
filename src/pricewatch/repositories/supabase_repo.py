@@ -164,6 +164,18 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         )
         return [PriceObservation(**row) for row in res.data]
 
+    async def get_active_listings_by_provider(
+        self, provider_code: str
+    ) -> List[CanonicalListing]:
+        res = (
+            self.client.table("canonical_listings")
+            .select("*")
+            .eq("provider_code", provider_code)
+            .eq("is_monitored", True)
+            .execute()
+        )
+        return [CanonicalListing(**row) for row in res.data]
+
     # --- Subscription Repo ---
     async def create_or_update_subscription(self, sub: Subscription) -> Subscription:
         payload = {

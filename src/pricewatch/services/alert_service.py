@@ -171,6 +171,18 @@ class AlertService:
 
         for sub in subscriptions:
             # 1. Check for re-arm condition
+            if (
+                listing.provider_code == "amul"
+                and (not quote.available or (quote.inventory_quantity is not None and quote.inventory_quantity <= 0))
+                and not sub.alert_rearmed
+            ):
+                await self.repo.update_alert_state(
+                    subscription_id=sub.id,
+                    last_alerted_price_paise=sub.last_alerted_price_paise,
+                    alert_rearmed=True,
+                )
+                continue
+
             rearm_threshold = int(sub.target_price_paise * (100 + settings.HYSTERESIS_REARM_PCT) / 100)
             if quote.price_paise and quote.price_paise >= rearm_threshold and not sub.alert_rearmed:
                 await self.repo.update_alert_state(

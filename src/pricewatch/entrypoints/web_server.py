@@ -22,6 +22,7 @@ from pricewatch.config import settings
 from pricewatch.logging_setup import get_logger, setup_logging
 from pricewatch.repositories.memory_repo import MemoryRepository
 from pricewatch.repositories.supabase_repo import SupabaseRepository
+from pricewatch.services.amul_poller import run_amul_poller
 from pricewatch.services.tracker_service import TrackerService
 
 logger = get_logger("web_server")
@@ -107,11 +108,15 @@ async def run_server_async(port: int, webhook_url: str) -> None:
     tornado_app.listen(port, address="0.0.0.0")
     logger.info("PriceWatch HTTP server listening on 0.0.0.0", port=port)
 
+    # Launch 60-second high-frequency Amul stock poller
+    amul_task = asyncio.create_task(run_amul_poller(repo=repo, bot=ptb_app.bot, interval_seconds=60))
+
     # Keep running
     try:
         await asyncio.Event().wait()
     finally:
         logger.info("Shutting down bot and web server...")
+        amul_task.cancel()
         await ptb_app.stop()
         await ptb_app.shutdown()
 

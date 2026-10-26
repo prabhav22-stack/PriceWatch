@@ -159,6 +159,14 @@ class MemoryRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         matching.sort(key=lambda o: o.observed_at or datetime.min)
         return matching[-limit:]
 
+    async def get_active_listings_by_provider(
+        self, provider_code: str
+    ) -> List[CanonicalListing]:
+        return [
+            l for l in self.listings.values()
+            if l.provider_code == provider_code and l.is_monitored
+        ]
+
     # --- Subscription Repo ---
     async def create_or_update_subscription(self, sub: Subscription) -> Subscription:
         for s_id, existing in self.subscriptions.items():
