@@ -23,6 +23,8 @@ class VariantOption(BaseModel):
     mrp_paise: Optional[int] = None
     available: bool = True
     package_quantity: Optional[str] = None
+    inventory_quantity: Optional[int] = None
+    image_url: Optional[str] = None
 
 
 class ResolutionResult(BaseModel):
@@ -36,6 +38,7 @@ class ResolutionResult(BaseModel):
     requires_pincode: bool = False
     variants: Sequence[VariantOption]
     pinned_variant_id: Optional[str] = None  # None if multi-variant and URL lacks ?variant=
+    image_url: Optional[str] = None
 
 
 class PriceQuote(BaseModel):
@@ -52,6 +55,7 @@ class PriceQuote(BaseModel):
     extraction_method: str
     seller_name: Optional[str] = None
     raw_variant_title: Optional[str] = None
+    inventory_quantity: Optional[int] = None
 
 
 class ValidationDecision(BaseModel):
@@ -93,6 +97,7 @@ class CanonicalListing(BaseModel):
     last_price_paise: Optional[int] = None
     last_mrp_paise: Optional[int] = None
     last_available: Optional[bool] = None
+    inventory_quantity: Optional[int] = None
     last_seller_name: Optional[str] = None
     last_checked_at: Optional[datetime] = None
     last_changed_at: Optional[datetime] = None

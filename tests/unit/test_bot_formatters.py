@@ -75,3 +75,44 @@ def test_subscription_list_with_items():
     assert "Your Tracked Products (1)" in text
     assert "Nakpro Whey" in text
     assert "/untrack_99" in text
+
+
+def test_stepwise_product_preview_formatter():
+    from pricewatch.bot.formatters import format_stepwise_product_preview
+    listing = CanonicalListing(
+        id=55,
+        provider_code="amazon",
+        external_product_id="B002",
+        external_variant_id="B002",
+        canonical_url="https://amazon.in/dp/B002",
+        product_title="Isolate Whey",
+        variant_title="Vanilla 1kg",
+        last_price_paise=300000,
+        last_mrp_paise=350000,
+        last_available=True,
+        pincode="110001",
+    )
+    preview = format_stepwise_product_preview(listing)
+    assert "Isolate Whey" in preview
+    assert "Vanilla 1kg" in preview
+    assert "₹3,000" in preview
+    assert "₹3,500" in preview
+    assert "What target price would you like to set" in preview
+
+
+def test_amul_formatters():
+    from pricewatch.bot.formatters import format_amul_category_view, format_amul_tracking_confirmed
+    products = [
+        {"name": "Amul Protein Lassi", "sku": "lassi-01", "price_paise": 2500, "available": True, "inventory_quantity": 40},
+        {"name": "Amul Protein Shake", "sku": "shake-02", "price_paise": 4000, "available": False, "inventory_quantity": 0},
+    ]
+    view = format_amul_category_view("Protein", "110001", "delhi", products)
+    assert "Amul Protein Products" in view
+    assert "40 units" in view
+    assert "Out of Stock" in view
+
+    conf = format_amul_tracking_confirmed("Amul Protein Lassi", "lassi-01", "110001", True, 40)
+    assert "Amul Stock Tracker Activated" in conf
+    assert "lassi-01" in conf
+    assert "40 units" in conf
+

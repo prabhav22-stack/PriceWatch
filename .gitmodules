@@ -1,0 +1,3 @@
+[submodule "vendor/amul-notify"]
+	path = vendor/amul-notify
+	url = https://github.com/SwapnilSoni1999/amul-notify.git

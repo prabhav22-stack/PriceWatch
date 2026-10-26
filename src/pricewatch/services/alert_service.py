@@ -42,18 +42,25 @@ class AlertService:
         sub: Subscription,
         quote: PriceQuote,
         hysteresis_rearm_pct: int = 3,
+        listing: Optional[CanonicalListing] = None,
     ) -> Optional[AlertType]:
         """
-        Pure function evaluating the 6-scenario alert state machine with hysteresis.
-        Returns AlertType if notification should fire, or None if suppressed.
+        Pure function evaluating alert state machine with hysteresis.
+        Supports target price drops, further drops, significant flash drops, and Amul stock restocks.
         """
+        # 1. Amul Stock Restock Logic (Quantity & Availability focused)
+        if listing and listing.provider_code == "amul":
+            if quote.available and (quote.inventory_quantity is None or quote.inventory_quantity > 0):
+                if sub.alert_rearmed:
+                    return AlertType.AMUL_RESTOCK
+            return None
+
         if not quote.available or quote.price_paise is None:
             return None
 
         # Scenario 5: Check if price rose enough to re-arm (+3% above target)
         rearm_threshold = int(sub.target_price_paise * (100 + hysteresis_rearm_pct) / 100)
         if quote.price_paise >= rearm_threshold and not sub.alert_rearmed:
-            # Price recovered; can be re-armed
             return None
 
         # Scenario 1: Initial drop to target
@@ -67,6 +74,12 @@ class AlertService:
             )
             if quote.price_paise <= drop_threshold:
                 return AlertType.FURTHER_DROP
+
+        # Significant Price Drop (>= 10% drop from last price, even if above target)
+        if listing and listing.last_price_paise and sub.alert_rearmed:
+            ten_pct_drop = int(listing.last_price_paise * 0.90)
+            if quote.price_paise <= ten_pct_drop:
+                return AlertType.SIGNIFICANT_DROP
 
         return None
 
@@ -82,10 +95,33 @@ class AlertService:
         target_str = format_paise_to_inr(sub.target_price_paise)
         mrp_str = format_paise_to_inr(quote.mrp_paise) if quote.mrp_paise else None
 
+        if alert_type == AlertType.AMUL_RESTOCK:
+            qty_str = (
+                f"<b>{quote.inventory_quantity} units</b> available"
+                if quote.inventory_quantity is not None
+                else "In Stock"
+            )
+            lines = [
+                "🥛 <b>AMUL PRODUCT BACK IN STOCK!</b>",
+                "",
+                f"📦 <b>Product:</b> {listing.product_title}",
+                f"🔢 <b>Available Stock:</b> {qty_str}",
+                f"💰 <b>Price:</b> <code>{price_str}</code>",
+            ]
+            if listing.pincode:
+                lines.append(f"📍 <b>Delivery Pincode:</b> <code>{listing.pincode}</code>")
+            lines.extend([
+                "",
+                f'🔗 <a href="{listing.canonical_url}">Order on Amul Shop Now</a>',
+            ])
+            return "\n".join(lines)
+
         if alert_type == AlertType.TARGET_REACHED:
             header = "🎯 <b>PRICE TARGET REACHED!</b>"
         elif alert_type == AlertType.FURTHER_DROP:
             header = "⚡ <b>PRICE DROPPED EVEN FURTHER!</b>"
+        elif alert_type == AlertType.SIGNIFICANT_DROP:
+            header = "🔥 <b>SIGNIFICANT PRICE DROP DETECTED!</b>"
         else:
             header = "🔔 <b>PRICE ALERT</b>"
 
@@ -96,6 +132,11 @@ class AlertService:
         ]
         if listing.variant_title and listing.variant_title != "Default":
             lines.append(f"🏷️ <b>Variant:</b> {listing.variant_title}")
+
+        if alert_type == AlertType.SIGNIFICANT_DROP and listing.last_price_paise and quote.price_paise:
+            drop_pct = int(round((listing.last_price_paise - quote.price_paise) * 100 / listing.last_price_paise))
+            prev_str = format_paise_to_inr(listing.last_price_paise)
+            lines.append(f"📉 <b>Dropped by {drop_pct}%</b> (from {prev_str} ➔ {price_str})")
 
         lines.extend([
             f"💰 <b>Current Price:</b> <code>{price_str}</code>",
@@ -139,13 +180,14 @@ class AlertService:
                 )
                 continue
 
-            alert_type = self.evaluate_alert(sub, quote, settings.HYSTERESIS_REARM_PCT)
+            alert_type = self.evaluate_alert(sub, quote, settings.HYSTERESIS_REARM_PCT, listing=listing)
             if not alert_type:
                 continue
 
             # 2. Phase 1: Outbox row with deterministic idempotency key
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            idempotency_key = f"{sub.id}:{alert_type.value}:{quote.price_paise}:{today_str}"
+            price_for_key = quote.price_paise or quote.inventory_quantity or 0
+            idempotency_key = f"{sub.id}:{alert_type.value}:{price_for_key}:{today_str}"
 
             notif = NotificationLog(
                 subscription_id=sub.id,

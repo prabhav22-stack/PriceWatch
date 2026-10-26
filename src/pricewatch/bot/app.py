@@ -11,11 +11,14 @@ from telegram.ext import (
     filters,
 )
 
-from pricewatch.bot.handlers.callbacks import variant_callback_handler
+from pricewatch.bot.handlers.callbacks import callback_query_dispatcher
 from pricewatch.bot.handlers.commands import (
+    amul_command_handler,
     help_handler,
+    history_command_handler,
     list_handler,
     pincode_handler,
+    plain_text_handler,
     start_handler,
     status_handler,
     track_handler,
@@ -51,11 +54,17 @@ def create_telegram_app(
     app.add_handler(CommandHandler("untrack", untrack_handler))
     app.add_handler(CommandHandler("pincode", pincode_handler))
     app.add_handler(CommandHandler("status", status_handler))
+    app.add_handler(CommandHandler("amul", amul_command_handler))
+    app.add_handler(CommandHandler("history", history_command_handler))
 
-    # Catch /untrack_123 shorthand commands
+    # Catch /untrack_123 and /history_123 shorthand commands
     app.add_handler(MessageHandler(filters.Regex(r"^/untrack_\d+"), untrack_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"^/history_\d+"), history_command_handler))
 
-    # Register Callback Query Handlers (variant buttons)
-    app.add_handler(CallbackQueryHandler(variant_callback_handler))
+    # Catch plain text: conversational URL pasting & custom target price replies
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_text_handler))
+
+    # Central Callback Query Handler (pills, variant buttons, chart, Amul)
+    app.add_handler(CallbackQueryHandler(callback_query_dispatcher))
 
     return app

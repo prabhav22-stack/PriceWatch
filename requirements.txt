@@ -11,4 +11,5 @@ supabase>=2.10.0
 tenacity>=8.5.0
 orjson>=3.10.0
 brotli>=1.1.0
+matplotlib>=3.9.0
 

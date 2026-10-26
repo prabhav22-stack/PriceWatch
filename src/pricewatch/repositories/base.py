@@ -67,6 +67,12 @@ class BaseListingRepo(ABC):
     async def record_observation(self, observation: PriceObservation) -> None:
         """Record a historical price snapshot or daily heartbeat."""
 
+    @abstractmethod
+    async def get_price_observations(
+        self, listing_id: int, limit: int = 50
+    ) -> List[PriceObservation]:
+        """Fetch historical price observations for a listing."""
+
 
 class BaseSubscriptionRepo(ABC):
     @abstractmethod

@@ -151,6 +151,19 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         }
         self.client.table("price_observations").insert(payload).execute()
 
+    async def get_price_observations(
+        self, listing_id: int, limit: int = 50
+    ) -> List[PriceObservation]:
+        res = (
+            self.client.table("price_observations")
+            .select("*")
+            .eq("listing_id", listing_id)
+            .order("observed_at", desc=False)
+            .limit(limit)
+            .execute()
+        )
+        return [PriceObservation(**row) for row in res.data]
+
     # --- Subscription Repo ---
     async def create_or_update_subscription(self, sub: Subscription) -> Subscription:
         payload = {

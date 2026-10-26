@@ -152,6 +152,13 @@ class MemoryRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         obs = observation.model_copy(update={"id": obs_id, "observed_at": datetime.now(timezone.utc)})
         self.observations.append(obs)
 
+    async def get_price_observations(
+        self, listing_id: int, limit: int = 50
+    ) -> List[PriceObservation]:
+        matching = [o for o in self.observations if o.listing_id == listing_id]
+        matching.sort(key=lambda o: o.observed_at or datetime.min)
+        return matching[-limit:]
+
     # --- Subscription Repo ---
     async def create_or_update_subscription(self, sub: Subscription) -> Subscription:
         for s_id, existing in self.subscriptions.items():

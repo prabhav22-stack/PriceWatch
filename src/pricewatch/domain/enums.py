@@ -21,6 +21,8 @@ class AlertType(str, Enum):
     TARGET_REACHED = "TARGET_REACHED"
     FURTHER_DROP = "FURTHER_DROP"
     RESTOCK_AT_TARGET = "RESTOCK_AT_TARGET"
+    SIGNIFICANT_DROP = "SIGNIFICANT_DROP"
+    AMUL_RESTOCK = "AMUL_RESTOCK"
 
 
 class NotificationStatus(str, Enum):

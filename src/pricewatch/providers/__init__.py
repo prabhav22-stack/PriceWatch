@@ -4,6 +4,7 @@ from pricewatch.providers.base import BaseProvider, ProviderRegistry
 from pricewatch.providers.shopify import ShopifyProvider
 from pricewatch.providers.amazon_fresh import AmazonFreshProvider
 from pricewatch.providers.generic import GenericProvider
+from pricewatch.providers.amul import AmulProvider
 
 __all__ = [
     "BaseProvider",
@@ -11,4 +12,5 @@ __all__ = [
     "ShopifyProvider",
     "AmazonFreshProvider",
     "GenericProvider",
+    "AmulProvider",
 ]
