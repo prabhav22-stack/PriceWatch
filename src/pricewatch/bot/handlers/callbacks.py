@@ -261,30 +261,52 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             context.user_data.pop("awaiting_custom_price", None)
             return
 
-        # 10. Settings Configuration Callbacks: cfg:toggle_style, cfg:max:<limit>, cfg:toggle_ao
+        # 10. Settings Configuration Callbacks
         if data.startswith("cfg:"):
             cfg_action = data.replace("cfg:", "")
             user = await tracker_service.get_or_register_user(telegram_id=user_id)
+            toast_text = "Settings updated ✅"
+
             if cfg_action == "toggle_style":
                 new_style = "once" if user.tracking_style == "always" else "always"
                 user = await tracker_service.update_user_settings(user_id, tracking_style=new_style)
+                toast_text = f"Tracking style: {new_style.capitalize()} 🔄"
+            elif cfg_action.startswith("style:"):
+                new_style = cfg_action.split(":")[1]
+                user = await tracker_service.update_user_settings(user_id, tracking_style=new_style)
+                toast_text = f"Tracking style: {new_style.capitalize()}"
             elif cfg_action.startswith("max:") or cfg_action.startswith("repeat:"):
                 new_max = int(cfg_action.split(":")[1])
                 user = await tracker_service.update_user_settings(user_id, max_notify_count=new_max)
+                toast_text = f"Repeat limit: {'Until OOS ♾️' if new_max == 0 else f'{new_max} alerts'}"
             elif cfg_action == "toggle_ao":
                 new_ao = not user.auto_order_enabled
                 user = await tracker_service.update_user_settings(user_id, auto_order_enabled=new_ao)
+                toast_text = f"Auto-Order: {'Enabled 🟢' if new_ao else 'Disabled ⚪'}"
             elif cfg_action == "toggle_all_protein":
                 favs = list(user.favourite_skus or [])
                 if "ALL_PROTEIN" in favs:
                     favs.remove("ALL_PROTEIN")
+                    toast_text = "All-Protein alerts: Disabled 🔕"
                 else:
                     favs.append("ALL_PROTEIN")
+                    toast_text = "All-Protein alerts: Activated 🔔"
                 user = await tracker_service.update_user_settings(user_id, favourite_skus=favs)
+            elif cfg_action == "refresh":
+                toast_text = "Settings refreshed 🔄"
 
             text = format_settings_menu(user)
             kb = build_settings_keyboard(user)
-            await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception as edit_err:
+                if "Message is not modified" not in str(edit_err):
+                    logger.warning("Error updating settings message", error=str(edit_err))
+
+            try:
+                await query.answer(toast_text)
+            except Exception:
+                pass
             return
 
         # 10. Variant selection button (trk:v:<variant_id>)

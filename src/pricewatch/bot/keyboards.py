@@ -30,30 +30,44 @@ def build_variant_selection_keyboard(
 
 
 def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
-    """Settings interactive controls for style, max notifications, and auto-order."""
-    style_toggle = "Once 1️⃣" if user.tracking_style == "always" else "Always 🔄"
-    ao_toggle = "Disable ⚪" if user.auto_order_enabled else "Enable 🟢"
-    all_protein_toggle = "Turn Off 🔕" if "ALL_PROTEIN" in (user.favourite_skus or []) else "Turn On 🔔"
+    """Settings interactive controls with active checkmark feedback."""
+    r_val = user.max_notify_count
+
+    btn_1 = "✅ 1x" if r_val == 1 else "1 Alert"
+    btn_2 = "✅ 2x" if r_val == 2 else "2 Alerts"
+    btn_3 = "✅ 3x" if r_val == 3 else "3 Alerts"
+    btn_5 = "✅ 5x" if r_val == 5 else "5 Alerts"
+    btn_10 = "✅ 10x" if r_val == 10 else "10 Alerts"
+    btn_0 = "✅ ♾️ Until OOS" if r_val == 0 else "♾️ Until OOS"
+
+    style_always = "✅ Always 🔄" if user.tracking_style == "always" else "Always 🔄"
+    style_once = "✅ Once 1️⃣" if user.tracking_style == "once" else "Once 1️⃣"
+
+    all_protein_on = "ALL_PROTEIN" in (user.favourite_skus or [])
+    btn_ap = "🔔 All-Protein: ON" if all_protein_on else "🔕 All-Protein: OFF"
+    btn_ao = "⚡ Auto-Order: ON" if user.auto_order_enabled else "⚡ Auto-Order: OFF"
 
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"All Protein Alerts: {all_protein_toggle}", callback_data="cfg:toggle_all_protein"),
+            InlineKeyboardButton(btn_ap, callback_data="cfg:toggle_all_protein"),
+            InlineKeyboardButton(btn_ao, callback_data="cfg:toggle_ao"),
         ],
         [
-            InlineKeyboardButton("1 Alert", callback_data="cfg:repeat:1"),
-            InlineKeyboardButton("2 Alerts", callback_data="cfg:repeat:2"),
-            InlineKeyboardButton("3 Alerts", callback_data="cfg:repeat:3"),
-            InlineKeyboardButton("5 Alerts", callback_data="cfg:repeat:5"),
+            InlineKeyboardButton(btn_1, callback_data="cfg:repeat:1"),
+            InlineKeyboardButton(btn_2, callback_data="cfg:repeat:2"),
+            InlineKeyboardButton(btn_3, callback_data="cfg:repeat:3"),
         ],
         [
-            InlineKeyboardButton("10 Alerts", callback_data="cfg:repeat:10"),
-            InlineKeyboardButton("♾️ Until Stock Runs Out", callback_data="cfg:repeat:0"),
+            InlineKeyboardButton(btn_5, callback_data="cfg:repeat:5"),
+            InlineKeyboardButton(btn_10, callback_data="cfg:repeat:10"),
+            InlineKeyboardButton(btn_0, callback_data="cfg:repeat:0"),
         ],
         [
-            InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
+            InlineKeyboardButton(style_always, callback_data="cfg:style:always"),
+            InlineKeyboardButton(style_once, callback_data="cfg:style:once"),
         ],
         [
-            InlineKeyboardButton(f"Auto-Order: {ao_toggle}", callback_data="cfg:toggle_ao"),
+            InlineKeyboardButton("🔄 Refresh Status", callback_data="cfg:refresh"),
         ],
     ])
 
@@ -144,33 +158,4 @@ def build_amul_product_stock_keyboard(
 
     keyboard.append([InlineKeyboardButton("⬅️ Back to Categories", callback_data="amul_menu")])
     return InlineKeyboardMarkup(keyboard)
-
-
-def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
-    """Settings interactive controls for style, max notifications, and auto-order."""
-    style_toggle = "Once 1️⃣" if user.tracking_style == "always" else "Always 🔄"
-    ao_toggle = "Disable ⚪" if user.auto_order_enabled else "Enable 🟢"
-    all_protein_toggle = "Turn Off 🔕" if "ALL_PROTEIN" in (user.favourite_skus or []) else "Turn On 🔔"
-
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(f"All Protein Alerts: {all_protein_toggle}", callback_data="cfg:toggle_all_protein"),
-        ],
-        [
-            InlineKeyboardButton("1 Alert", callback_data="cfg:repeat:1"),
-            InlineKeyboardButton("2 Alerts", callback_data="cfg:repeat:2"),
-            InlineKeyboardButton("3 Alerts", callback_data="cfg:repeat:3"),
-            InlineKeyboardButton("5 Alerts", callback_data="cfg:repeat:5"),
-        ],
-        [
-            InlineKeyboardButton("10 Alerts", callback_data="cfg:repeat:10"),
-            InlineKeyboardButton("♾️ Until Stock Runs Out", callback_data="cfg:repeat:0"),
-        ],
-        [
-            InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
-        ],
-        [
-            InlineKeyboardButton(f"Auto-Order: {ao_toggle}", callback_data="cfg:toggle_ao"),
-        ],
-    ])
 

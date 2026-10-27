@@ -37,6 +37,8 @@ class AlertService:
         self.user_repo = user_repo
         self.bot = bot
         self._cycle_counts: dict[int, int] = {}
+        self._last_alerted_ts: dict[int, float] = {}
+        self._last_alerted_qty: dict[int, int] = {}
 
     @staticmethod
     def evaluate_alert(
@@ -126,6 +128,27 @@ class AlertService:
                 "",
                 f'📦 <b>Product:</b> <a href="{listing.canonical_url}">{listing.product_title}</a>',
                 f"🔢 <b>Stock Update:</b> <code>{prev_qty}</code> ➔ <b>{curr_qty} units remaining</b> (-{diff} sold)",
+                f"💰 <b>Price:</b> <code>{price_str}</code>",
+            ]
+            if listing.pincode:
+                lines.append(f"📍 <b>Delivery Pincode:</b> <code>{listing.pincode}</code>")
+            lines.extend([
+                "",
+                f'🔗 <a href="{listing.canonical_url}">Order on Amul Shop Now</a>',
+            ])
+            return "\n".join(lines)
+
+        if alert_type == AlertType.AMUL_REPEAT_REMINDER:
+            qty_str = (
+                f"<b>{quote.inventory_quantity} units</b> available"
+                if quote.inventory_quantity is not None
+                else "In Stock"
+            )
+            lines = [
+                "🥛 <b>AMUL PRODUCT STILL IN STOCK!</b>",
+                "",
+                f'📦 <b>Product:</b> <a href="{listing.canonical_url}">{listing.product_title}</a>',
+                f"🔢 <b>Current Stock:</b> {qty_str}",
                 f"💰 <b>Price:</b> <code>{price_str}</code>",
             ]
             if listing.pincode:
@@ -226,22 +249,35 @@ class AlertService:
                 continue
 
             alert_type = None
+            now_ts = datetime.now(timezone.utc).timestamp()
             if listing.provider_code == "amul":
                 if quote.available and (quote.inventory_quantity is None or quote.inventory_quantity > 0):
                     if sub.alert_rearmed:
                         alert_type = AlertType.AMUL_RESTOCK
                         self._cycle_counts[sub.id] = 1
+                        self._last_alerted_ts[sub.id] = now_ts
+                        self._last_alerted_qty[sub.id] = quote.inventory_quantity or 0
                     else:
-                        prev_qty = sub.last_alerted_price_paise
+                        prev_qty = self._last_alerted_qty.get(sub.id, sub.last_alerted_price_paise)
                         curr_qty = quote.inventory_quantity
-                        if prev_qty is not None and curr_qty is not None and curr_qty < prev_qty:
-                            user = await self.user_repo.get_or_create_user(sub.telegram_id) if self.user_repo else None
-                            max_alerts = user.max_notify_count if user is not None else 5
-                            cycle_count = self._cycle_counts.get(sub.id, 1)
-                            # max_alerts == 0 means "until stock runs out"
-                            if max_alerts == 0 or cycle_count < max_alerts:
+                        user = await self.user_repo.get_or_create_user(sub.telegram_id) if self.user_repo else None
+                        max_alerts = user.max_notify_count if user is not None else 5
+                        cycle_count = self._cycle_counts.get(sub.id, 1)
+
+                        # Check if eligible for repeat notifications (max_alerts == 0 means until stock runs out)
+                        if max_alerts == 0 or cycle_count < max_alerts:
+                            # 1. Did stock decrease? Immediate alert!
+                            if prev_qty is not None and curr_qty is not None and curr_qty < prev_qty:
                                 alert_type = AlertType.AMUL_STOCK_DECREASE
                                 self._cycle_counts[sub.id] = cycle_count + 1
+                                self._last_alerted_ts[sub.id] = now_ts
+                                self._last_alerted_qty[sub.id] = curr_qty
+                            # 2. Did >= 120s elapse since last alert? Periodic in-stock reminder!
+                            elif now_ts - self._last_alerted_ts.get(sub.id, 0) >= 120:
+                                alert_type = AlertType.AMUL_REPEAT_REMINDER
+                                self._cycle_counts[sub.id] = cycle_count + 1
+                                self._last_alerted_ts[sub.id] = now_ts
+                                self._last_alerted_qty[sub.id] = curr_qty or 0
             else:
                 alert_type = self.evaluate_alert(sub, quote, settings.HYSTERESIS_REARM_PCT, listing=listing)
 
@@ -249,8 +285,8 @@ class AlertService:
                 continue
 
             # 2. Phase 1: Outbox row with deterministic idempotency key
-            if alert_type in (AlertType.AMUL_RESTOCK, AlertType.AMUL_STOCK_DECREASE):
-                idempotency_key = f"{sub.id}:{alert_type.value}:{quote.inventory_quantity}"
+            if alert_type in (AlertType.AMUL_RESTOCK, AlertType.AMUL_STOCK_DECREASE, AlertType.AMUL_REPEAT_REMINDER):
+                idempotency_key = f"{sub.id}:{alert_type.value}:{quote.inventory_quantity}:{int(now_ts // 60)}"
             else:
                 today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 price_for_key = quote.price_paise or quote.inventory_quantity or 0
