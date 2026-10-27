@@ -1,7 +1,7 @@
 """Strongly-typed domain models and Data Transfer Objects (DTOs)."""
 
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from pricewatch.domain.enums import (
@@ -76,6 +76,14 @@ class User(BaseModel):
     first_name: Optional[str] = None
     default_pincode: Optional[str] = None
     is_active: bool = True
+    favourite_skus: List[str] = Field(default_factory=list)
+    tracking_style: str = "always"
+    max_notify_count: int = 5
+    auto_order_enabled: bool = False
+    auto_order_phone: Optional[str] = None
+    auto_order_address_id: Optional[str] = None
+    auto_order_auth_token: Optional[str] = None
+    auto_order_skus: List[str] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

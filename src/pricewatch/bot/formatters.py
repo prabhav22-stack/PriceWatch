@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from pricewatch.domain.models import CanonicalListing, Subscription
+from pricewatch.domain.models import CanonicalListing, Subscription, User
 from pricewatch.utils.time_utils import (
     format_duration,
     format_ist_datetime,
@@ -14,16 +14,23 @@ from pricewatch.validation.normalizer import format_paise_to_inr
 def format_welcome_message(first_name: str = "there") -> str:
     return (
         f"👋 <b>Welcome to PriceWatch 2.0, {first_name}!</b>\n\n"
-        "I track prices and stock availability across Indian e-commerce stores:\n"
+        "I track prices and real-time stock availability across Indian e-commerce stores:\n"
+        "• <b>Amul Shop</b> (exclusive real-time 60s restock watcher & auto-order)\n"
         "• <b>Amazon & Amazon Fresh</b> (hyperlocal pincodes)\n"
-        "• <b>Amul Shop</b> (exclusive real-time stock & inventory alerts)\n"
         "• <b>Nakpro, MuscleBlaze, Shopify stores</b>\n\n"
-        "<b>How to Use:</b>\n"
-        "• 🔗 <b>Just paste any product link here</b> — I'll inspect it and let you pick your target price!\n"
-        "• 🥛 Type <code>/amul</code> to browse & track live Amul protein stock\n"
+        "<b>Amul Tools:</b>\n"
+        "• 🥛 <code>/amul</code> - Browse products by category\n"
+        "• 🔍 <code>/search &lt;query&gt;</code> - Instant product search (e.g. <code>/search blueberry</code>)\n"
+        "• ⭐ <code>/favourites</code> - View all your bookmarked products\n"
+        "• 📊 <code>/analytics</code> - Warehouse inventory ratio & status\n"
+        "• 📦 <code>/count</code> - Stock quantity tables\n"
+        "• ⚙️ <code>/settings</code> - Notification limits & tracking style\n"
+        "• ⚡ <code>/autoorder</code> - Automated headless checkout\n\n"
+        "<b>General Tracking:</b>\n"
+        "• 🔗 <b>Just paste any product link here</b> to start tracking!\n"
         "• 📋 <code>/list</code> - View your active tracking list\n"
-        "• 📍 <code>/pincode 110001</code> - Set your default delivery pincode\n"
-        "• 📊 <code>/history &lt;id&gt;</code> - View 3-day price trend chart\n"
+        "• 📍 <code>/pincode 842002</code> - Change delivery pincode\n"
+        "• 📈 <code>/history &lt;id&gt;</code> - View price trend chart\n"
         "• 💡 Or use <code>/track &lt;url&gt; &lt;target_price&gt;</code> directly"
     )
 
@@ -31,15 +38,21 @@ def format_welcome_message(first_name: str = "there") -> str:
 def format_help_message() -> str:
     return (
         "📖 <b>PriceWatch 2.0 Commands</b>\n\n"
-        "<b>Tracking Products:</b>\n"
-        "• <b>Send Any Link:</b> Just paste an Amazon, Nakpro, or store link in chat!\n"
+        "🥛 <b>Amul Restock Watcher:</b>\n"
+        "• <code>/amul</code> - Interactive category menu\n"
+        "• <code>/search &lt;query&gt;</code> - Search across Amul catalog\n"
+        "• <code>/favourites</code> - List starred items\n"
+        "• <code>/analytics</code> - Local warehouse in-stock metrics\n"
+        "• <code>/count</code> - Real-time available units per product\n"
+        "• <code>/settings</code> - Alert style ('always' vs 'once') & max alerts\n"
+        "• <code>/autoorder</code> - Configure automated StoreHippo checkout\n\n"
+        "🛒 <b>General Stores (Amazon / Nakpro / Shopify):</b>\n"
+        "• <b>Send Any Link:</b> Just paste a product URL in chat!\n"
         "• <code>/track &lt;url&gt; &lt;target_price&gt; [pincode]</code>\n"
-        "• <code>/amul</code> - Browse Amul products & track stock in 1-click\n\n"
-        "<b>Management & Analytics:</b>\n"
-        "• <code>/list</code> - View your active items with live prices\n"
+        "• <code>/list</code> - View active subscriptions\n"
         "• <code>/history &lt;id&gt;</code> - Generate visual price history chart\n"
         "• <code>/untrack &lt;id&gt;</code> - Stop tracking an item\n"
-        "• <code>/pincode &lt;6-digit&gt;</code> - Set your delivery pincode\n"
+        "• <code>/pincode &lt;6-digit&gt;</code> - Set delivery pincode\n"
         "• <code>/status</code> - View system health & background checks"
     )
 
@@ -169,13 +182,17 @@ def render_amul_product_item(
     product: dict,
     index: int,
     is_tracked: bool = False,
+    is_favourite: bool = False,
+    is_auto_ordered: bool = False,
     bot_username: str = "wheypricewatch_bot",
     show_protein: bool = True,
+    show_auto_order: bool = True,
     stock_history: Optional[Any] = None,
 ) -> str:
     """
     Render a single Amul product block matching the exact format from upstream amul-notify.
-    Includes verified direct /en/product/ links and Last InStock / Out of Stock timestamps.
+    Includes verified direct /en/product/ links, Last InStock / Out of Stock timestamps,
+    and [Track] | [Favourite] and [Add Auto Order] action links.
     """
     sku = product.get("sku") or ""
     name = product.get("name") or "Amul Product"
@@ -195,10 +212,22 @@ def render_amul_product_item(
     track_url = f"https://t.me/{bot_username}?start=track_{sku}"
     untrack_url = f"https://t.me/{bot_username}?start=untrack_{sku}"
     fav_url = f"https://t.me/{bot_username}?start=fav_{sku}"
+    ao_url = f"https://t.me/{bot_username}?start=ao_{sku}"
+
     action_link = (
         f'<b><a href="{untrack_url}">[Untrack]</a></b>'
         if is_tracked
         else f'<b><a href="{track_url}">[Track]</a></b>'
+    )
+    fav_link = (
+        f'<b><a href="{fav_url}">[Unfavourite]</a></b>'
+        if is_favourite
+        else f'<b><a href="{fav_url}">[Favourite]</a></b>'
+    )
+    ao_link = (
+        f'<b><a href="{ao_url}">[Remove Auto Order]</a></b>'
+        if is_auto_ordered
+        else f'<b><a href="{ao_url}">[Add Auto Order]</a></b>'
     )
 
     lines = [
@@ -241,8 +270,11 @@ def render_amul_product_item(
 
     lines.extend([
         f"     Available Quantity: <b>{qty}</b>",
-        f"{action_link} | <b><a href=\"{fav_url}\">[Favourite]</a></b>",
+        f"{action_link} | {fav_link}",
     ])
+    if show_auto_order:
+        lines.append(ao_link)
+
     return "\n".join(lines)
 
 
@@ -255,6 +287,8 @@ def format_amul_category_messages(
     tracked_skus: Set[str],
     bot_username: str = "wheypricewatch_bot",
     stock_histories: Optional[Dict[str, Any]] = None,
+    favourite_skus: Optional[Set[str]] = None,
+    auto_order_skus: Optional[Set[str]] = None,
 ) -> List[str]:
     """
     Build clean chunked messages containing ALL products in the category without missing any.
@@ -262,12 +296,16 @@ def format_amul_category_messages(
     title = f"<b>Amul {category_emoji} {category_label} Products</b> ({pincode} - {substore})"
     show_protein = category_label.lower() == "protein"
     histories = stock_histories or {}
+    favs = favourite_skus or set()
+    ao_set = auto_order_skus or set()
 
     blocks = [
         render_amul_product_item(
             product=p,
             index=i,
             is_tracked=p.get("sku") in tracked_skus,
+            is_favourite=p.get("sku") in favs,
+            is_auto_ordered=p.get("sku") in ao_set,
             bot_username=bot_username,
             show_protein=show_protein,
             stock_history=histories.get(p.get("sku")),
@@ -281,6 +319,167 @@ def format_amul_category_messages(
     first_block = f"{title}\n\n{blocks[0]}"
     all_blocks = [first_block] + blocks[1:]
     return chunk_text_blocks(all_blocks, max_length=3800)
+
+
+def format_amul_search_messages(
+    query: str,
+    pincode: str,
+    substore: str,
+    products: List[dict],
+    tracked_skus: Set[str],
+    favourite_skus: Optional[Set[str]] = None,
+    auto_order_skus: Optional[Set[str]] = None,
+    bot_username: str = "wheypricewatch_bot",
+    stock_histories: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """Format search results matching user query across all categories."""
+    title = f"🔍 <b>Amul Search: \"{query}\"</b> ({pincode} - {substore})"
+    histories = stock_histories or {}
+    favs = favourite_skus or set()
+    ao_set = auto_order_skus or set()
+
+    if not products:
+        return [f"{title}\n\nNo products found matching <b>{query}</b>."]
+
+    blocks = [
+        render_amul_product_item(
+            product=p,
+            index=i,
+            is_tracked=p.get("sku") in tracked_skus,
+            is_favourite=p.get("sku") in favs,
+            is_auto_ordered=p.get("sku") in ao_set,
+            bot_username=bot_username,
+            show_protein=bool(p.get("protein") and p.get("protein") != "N/A"),
+            stock_history=histories.get(p.get("sku")),
+        )
+        for i, p in enumerate(products, 1)
+    ]
+
+    first_block = f"{title}\n\nFound <b>{len(products)}</b> items:\n\n{blocks[0]}"
+    all_blocks = [first_block] + blocks[1:]
+    return chunk_text_blocks(all_blocks, max_length=3800)
+
+
+def format_amul_favourites_messages(
+    pincode: str,
+    substore: str,
+    products: List[dict],
+    tracked_skus: Set[str],
+    favourite_skus: Set[str],
+    auto_order_skus: Optional[Set[str]] = None,
+    bot_username: str = "wheypricewatch_bot",
+    stock_histories: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """Format user's starred favourite products."""
+    title = f"⭐ <b>Your Favourite Amul Products</b> ({pincode} - {substore})"
+    histories = stock_histories or {}
+    ao_set = auto_order_skus or set()
+
+    if not products:
+        return [
+            f"{title}\n\n"
+            "You have no favourites yet.\n"
+            "Browse products with <code>/amul</code> or search with <code>/search</code> and click <b>[Favourite]</b> to add them here!"
+        ]
+
+    blocks = [
+        render_amul_product_item(
+            product=p,
+            index=i,
+            is_tracked=p.get("sku") in tracked_skus,
+            is_favourite=True,
+            is_auto_ordered=p.get("sku") in ao_set,
+            bot_username=bot_username,
+            show_protein=bool(p.get("protein") and p.get("protein") != "N/A"),
+            stock_history=histories.get(p.get("sku")),
+        )
+        for i, p in enumerate(products, 1)
+    ]
+
+    first_block = f"{title}\n\n{blocks[0]}"
+    all_blocks = [first_block] + blocks[1:]
+    return chunk_text_blocks(all_blocks, max_length=3800)
+
+
+def format_amul_analytics(
+    substore: str,
+    pincode: str,
+    products: List[dict],
+    user_tracked_count: int = 0,
+) -> str:
+    """Format warehouse restock and inventory analytics."""
+    total = len(products)
+    in_stock = sum(1 for p in products if p.get("available"))
+    out_of_stock = total - in_stock
+    pct_avail = round((in_stock / total) * 100) if total else 0
+
+    return (
+        f"📊 <b>Amul Warehouse Analytics</b>\n"
+        f"📍 <b>Delivery Hub:</b> <code>{pincode}</code> (Substore: <i>{substore}</i>)\n\n"
+        f"🥛 <b>Protein Catalog Overview:</b>\n"
+        f"• Total Catalog Items: <b>{total}</b>\n"
+        f"• Currently In Stock: <b>{in_stock}</b> ({pct_avail}% 🟢)\n"
+        f"• Currently Out of Stock: <b>{out_of_stock}</b> (🔴)\n"
+        f"• Actively Monitored by You: <b>{user_tracked_count}</b>\n\n"
+        "⚡ <b>Fast Restock Loop:</b> Checking StoreHippo every 60s with instant alerts."
+    )
+
+
+def format_amul_product_count(products: List[dict]) -> str:
+    """Format inventory quantities table for products."""
+    sorted_prods = sorted(products, key=lambda p: p.get("inventory_quantity", 0), reverse=True)
+    lines = ["📦 <b>Amul Available Product Counts</b>\n"]
+    for i, p in enumerate(sorted_prods, 1):
+        name = p.get("name", "Product")
+        qty = p.get("inventory_quantity", 0)
+        status_dot = "🟢" if qty > 0 else "🔴"
+        lines.append(f"{i}. <b>{name}</b>: {status_dot} <b>{qty} units</b>")
+    return "\n".join(lines)
+
+
+def format_settings_menu(user: User) -> str:
+    """Format user preferences and alert settings overview."""
+    style_label = "Always 🔄" if user.tracking_style == "always" else "Once 1️⃣"
+    ao_label = "Enabled 🟢" if user.auto_order_enabled else "Disabled ⚪"
+    phone_label = user.auto_order_phone or "Not configured"
+
+    return (
+        "⚙️ <b>Notification & Tracking Settings</b>\n\n"
+        f"• <b>Default Pincode:</b> <code>{user.default_pincode or '842002'}</code>\n"
+        f"• <b>Tracking Style:</b> <b>{style_label}</b>\n"
+        f"• <b>Max Alerts per Product:</b> <b>{user.max_notify_count}</b>\n"
+        f"• <b>Auto-Order Checkout:</b> <b>{ao_label}</b> ({phone_label})\n\n"
+        "<b>Explanation of Options:</b>\n"
+        "• <b>Always</b>: Keeps tracking the product across restock cycles.\n"
+        "• <b>Once</b>: Alerts once when available, then automatically untracks to reduce spam.\n"
+        "• <b>Max Alerts</b>: Maximum restock alerts before pausing notifications."
+    )
+
+
+def format_auto_order_overview(user: User, addresses: Optional[List[dict]] = None) -> str:
+    """Format Auto-Order status, linked mobile, and delivery addresses."""
+    status_icon = "🟢 ACTIVE" if user.auto_order_enabled else "⚪ INACTIVE"
+    phone_text = user.auto_order_phone or "None (send <code>/autoorder login &lt;phone&gt;</code>)"
+    skus_text = ", ".join(user.auto_order_skus) if user.auto_order_skus else "None"
+    addr_text = user.auto_order_address_id or "Default Primary Warehouse Address"
+
+    lines = [
+        f"⚡ <b>Amul Headless Auto-Order Engine</b> [{status_icon}]\n",
+        f"📱 <b>Linked Mobile:</b> <code>{phone_text}</code>",
+        f"📍 <b>Delivery Address ID:</b> <code>{addr_text}</code>",
+        f"📦 <b>Auto-Order SKUs:</b> <code>{skus_text}</code>\n",
+        "<b>How Auto-Order Works:</b>",
+        "1. When Amul restocks your chosen SKU, PriceWatch detects it within 60 seconds.",
+        "2. The bot automatically creates a cart session and triggers StoreHippo COD checkout.",
+        "3. You receive an instant Telegram message with your order confirmation ID!\n",
+        "<b>Commands:</b>",
+        "• <code>/autoorder login &lt;10-digit-mobile&gt;</code> - Request Amul OTP",
+        "• <code>/autoorder otp &lt;6-digit-code&gt;</code> - Verify OTP & save session",
+        "• <code>/autoorder toggle</code> - Enable or disable auto-ordering",
+        "• <code>/autoorder add &lt;sku&gt;</code> - Add SKU to auto-order list",
+        "• <code>/autoorder remove &lt;sku&gt;</code> - Remove SKU from auto-order list",
+    ]
+    return "\n".join(lines)
 
 
 def format_amul_category_view(

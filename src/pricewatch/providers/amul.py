@@ -257,6 +257,38 @@ class AmulProvider(BaseProvider):
                 })
             return results
 
+    async def search_products(
+        self, query: str, pincode: str = "842002", categories: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Search products across categories matching a keyword or fuzzy string."""
+        cats = categories or ["protein", "dairy", "chocolates", "bakery"]
+        all_products: List[Dict[str, Any]] = []
+        seen_skus = set()
+        for cat in cats:
+            try:
+                cat_prods = await self.fetch_category_products(cat, pincode=pincode, limit=100)
+                for p in cat_prods:
+                    sku = p.get("sku")
+                    if sku and sku not in seen_skus:
+                        seen_skus.add(sku)
+                        all_products.append(p)
+            except Exception as e:
+                logger.warning("Error fetching category for search", cat=cat, error=str(e))
+
+        clean_query = query.strip()
+        if not clean_query:
+            return all_products
+
+        pattern = re.compile(".*?".join(map(re.escape, clean_query)), re.IGNORECASE)
+        matches = [
+            p for p in all_products
+            if pattern.search(p.get("name", ""))
+            or pattern.search(p.get("sku", ""))
+            or pattern.search(p.get("alias", ""))
+            or pattern.search(p.get("protein", ""))
+        ]
+        return matches
+
     async def resolve_url(self, url: str, pincode: str = "") -> ResolutionResult:
         """Resolve a direct shop.amul.com product URL during onboarding."""
         effective_pin = pincode or "110001"

@@ -232,6 +232,37 @@ class AlertService:
                         alert_rearmed=False,
                     )
                     alerts_sent += 1
+
+                    # Check user tracking style ("once" untracks automatically) & auto-order trigger
+                    if self.user_repo:
+                        try:
+                            user = await self.user_repo.get_or_create_user(sub.telegram_id)
+                            if user.tracking_style == "once":
+                                await self.repo.delete_subscription(sub.telegram_id, sub.listing_id)
+
+                            if (
+                                alert_type == AlertType.AMUL_RESTOCK
+                                and user.auto_order_enabled
+                                and listing.external_variant_id in (user.auto_order_skus or [])
+                            ):
+                                from pricewatch.services.amul_auto_order import AmulAutoOrderService
+                                ao_svc = AmulAutoOrderService()
+                                ao_res = await ao_svc.execute_restock_auto_order(
+                                    phone=user.auto_order_phone or "",
+                                    auth_token=user.auto_order_auth_token or "",
+                                    sku=listing.external_variant_id,
+                                    pincode=listing.pincode or "842002",
+                                    address_id=user.auto_order_address_id,
+                                )
+                                ao_text = (
+                                    "⚡ <b>AUTO-ORDER TRIGGERED!</b>\n\n"
+                                    f"📦 <b>Product:</b> {listing.product_title}\n"
+                                    f"🏷️ <b>SKU:</b> <code>{listing.external_variant_id}</code>\n"
+                                    f"📋 <b>Result:</b> {ao_res['message']}"
+                                )
+                                await self.bot.send_message(chat_id=sub.telegram_id, text=ao_text, parse_mode="HTML")
+                        except Exception as ao_err:
+                            logger.warning("Error evaluating auto-order in alert service", error=str(ao_err))
                 except Exception as exc:
                     err_msg = str(exc)
                     logger.error("Failed to deliver Telegram alert", chat_id=sub.telegram_id, error=err_msg)

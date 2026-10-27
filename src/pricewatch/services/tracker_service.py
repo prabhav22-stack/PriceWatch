@@ -43,6 +43,12 @@ class TrackerService:
     async def set_user_pincode(self, telegram_id: int, pincode: str) -> None:
         await self.user_repo.update_default_pincode(telegram_id, pincode)
 
+    async def toggle_user_favourite(self, telegram_id: int, sku: str) -> bool:
+        return await self.user_repo.toggle_favourite_sku(telegram_id, sku)
+
+    async def update_user_settings(self, telegram_id: int, **kwargs) -> User:
+        return await self.user_repo.update_user_settings(telegram_id, **kwargs)
+
     async def list_user_subscriptions(
         self, telegram_id: int
     ) -> List[Tuple[Subscription, CanonicalListing]]:

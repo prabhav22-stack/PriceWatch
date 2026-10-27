@@ -9,6 +9,7 @@ from pricewatch.bot.formatters import (
     format_amul_category_messages,
     format_amul_category_view,
     format_amul_tracking_confirmed,
+    format_settings_menu,
     format_stepwise_product_preview,
     format_tracking_confirmation,
 )
@@ -16,6 +17,7 @@ from pricewatch.bot.keyboards import (
     build_amul_category_keyboard,
     build_amul_product_stock_keyboard,
     build_listing_card_keyboard,
+    build_settings_keyboard,
     build_target_price_keyboard,
 )
 from pricewatch.domain.models import CanonicalListing, Subscription
@@ -257,6 +259,25 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             context.user_data.pop("pending_track", None)
             context.user_data.pop("pending_track_variants", None)
             context.user_data.pop("awaiting_custom_price", None)
+            return
+
+        # 10. Settings Configuration Callbacks: cfg:toggle_style, cfg:max:<limit>, cfg:toggle_ao
+        if data.startswith("cfg:"):
+            cfg_action = data.replace("cfg:", "")
+            user = await tracker_service.get_or_register_user(telegram_id=user_id)
+            if cfg_action == "toggle_style":
+                new_style = "once" if user.tracking_style == "always" else "always"
+                user = await tracker_service.update_user_settings(user_id, tracking_style=new_style)
+            elif cfg_action.startswith("max:"):
+                new_max = int(cfg_action.split(":")[1])
+                user = await tracker_service.update_user_settings(user_id, max_notify_count=new_max)
+            elif cfg_action == "toggle_ao":
+                new_ao = not user.auto_order_enabled
+                user = await tracker_service.update_user_settings(user_id, auto_order_enabled=new_ao)
+
+            text = format_settings_menu(user)
+            kb = build_settings_keyboard(user)
+            await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
             return
 
         # 10. Variant selection button (trk:v:<variant_id>)

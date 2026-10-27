@@ -5,9 +5,15 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from pricewatch.bot.formatters import (
+    format_amul_analytics,
     format_amul_category_menu,
+    format_amul_favourites_messages,
+    format_amul_product_count,
+    format_amul_search_messages,
     format_amul_tracking_confirmed,
+    format_auto_order_overview,
     format_help_message,
+    format_settings_menu,
     format_stepwise_product_preview,
     format_subscription_list,
     format_tracking_confirmation,
@@ -16,6 +22,7 @@ from pricewatch.bot.formatters import (
 from pricewatch.bot.keyboards import (
     build_amul_category_keyboard,
     build_listing_card_keyboard,
+    build_settings_keyboard,
     build_target_price_keyboard,
     build_variant_selection_keyboard,
 )
@@ -23,6 +30,8 @@ from pricewatch.domain.exceptions import VariantAmbiguousError
 from pricewatch.domain.models import CanonicalListing, Subscription
 from pricewatch.providers.amul import AmulProvider
 from pricewatch.providers.base import ProviderRegistry
+from pricewatch.services.amul_auto_order import AmulAutoOrderService
+from pricewatch.services.amul_stock_tracker import AmulStockTracker
 from pricewatch.services.chart_service import ChartService
 from pricewatch.services.tracker_service import TrackerService
 from pricewatch.validation.normalizer import parse_inr_to_paise
@@ -44,11 +53,46 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         first_name=user.first_name,
     )
 
-    # Check for deeplink payload: e.g. /start track_WPCCP01_01
+    # Check for deeplink payload: e.g. /start track_WPCCP01_01, /start fav_WPCCP01_01, /start ao_WPCCP01_01
     if context.args:
         payload = context.args[0].strip()
-        if payload.startswith("track_") or payload.startswith("fav_"):
-            sku = payload.replace("track_", "").replace("fav_", "")
+        if payload.startswith("fav_"):
+            sku = payload.replace("fav_", "")
+            added = await tracker_service.toggle_user_favourite(user.id, sku)
+            if added:
+                await update.effective_message.reply_html(
+                    f"⭐ <b>Added <code>{sku}</code> to your favourites!</b>\n\n"
+                    "View all your starred products anytime by typing <code>/favourites</code>."
+                )
+            else:
+                await update.effective_message.reply_html(
+                    f"🗑️ <b>Removed <code>{sku}</code> from your favourites.</b>"
+                )
+            return
+
+        if payload.startswith("ao_"):
+            sku = payload.replace("ao_", "")
+            current_skus = list(db_user.auto_order_skus or [])
+            if sku in current_skus:
+                current_skus.remove(sku)
+                await tracker_service.update_user_settings(user.id, auto_order_skus=current_skus)
+                await update.effective_message.reply_html(
+                    f"⚡ <b>Removed <code>{sku}</code> from Auto-Order list.</b>"
+                )
+            else:
+                current_skus.append(sku)
+                await tracker_service.update_user_settings(
+                    user.id, auto_order_skus=current_skus, auto_order_enabled=True
+                )
+                await update.effective_message.reply_html(
+                    f"⚡ <b>Added <code>{sku}</code> to Auto-Order list!</b>\n\n"
+                    "PriceWatch will automatically place a COD checkout when restock is detected.\n"
+                    "Configure or review anytime with <code>/autoorder</code>."
+                )
+            return
+
+        if payload.startswith("track_"):
+            sku = payload.replace("track_", "")
             pincode = db_user.default_pincode or "842002"
             provider = AmulProvider()
             quote = await provider.fetch_quote("", sku, sku, pincode=pincode)
@@ -121,7 +165,7 @@ async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.effective_user or not update.effective_message:
         return
 
-    args = context.args or []
+    args = context.args if isinstance(context.args, list) else []
     if len(args) < 2:
         await update.effective_message.reply_html(
             "⚠️ <b>Usage:</b> <code>/track &lt;url&gt; &lt;target_price&gt; [pincode]</code>\n\n"
@@ -235,7 +279,7 @@ async def pincode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not update.effective_user or not update.effective_message:
         return
 
-    args = context.args or []
+    args = context.args if isinstance(context.args, list) else []
     if not args or not _PINCODE_REGEX.match(args[0].strip()):
         await update.effective_message.reply_html(
             "⚠️ <b>Usage:</b> <code>/pincode &lt;6-digit pincode&gt;</code>\n"
@@ -270,6 +314,10 @@ async def amul_command_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not update.effective_user or not update.effective_message:
         return
 
+    if isinstance(context.args, list) and len(context.args) > 0:
+        await search_command_handler(update, context)
+        return
+
     tracker_service: TrackerService = context.bot_data["tracker_service"]
     user = await tracker_service.get_or_register_user(
         telegram_id=update.effective_user.id,
@@ -283,6 +331,273 @@ async def amul_command_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     text = format_amul_category_menu(pincode=pincode, substore=substore)
     kb = build_amul_category_keyboard()
     await update.effective_message.reply_html(text, reply_markup=kb)
+
+
+async def search_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /search <query> across Amul products."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    query = " ".join(context.args).strip() if context.args else ""
+    if not query:
+        await update.effective_message.reply_html(
+            "🔍 <b>Usage:</b> <code>/search &lt;keyword&gt;</code>\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>/search blueberry</code>\n"
+            "• <code>/search lassi</code>\n"
+            "• <code>/search whey</code>"
+        )
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(
+        telegram_id=update.effective_user.id,
+        username=update.effective_user.username,
+        first_name=update.effective_user.first_name,
+    )
+    pincode = user.default_pincode or "842002"
+
+    wait_msg = await update.effective_message.reply_text(f"🔍 Searching Amul for \"{query}\"...")
+
+    amul_provider = AmulProvider()
+    substore = await amul_provider.resolve_substore_for_pincode(pincode)
+    products = await amul_provider.search_products(query, pincode=pincode)
+
+    stock_tracker = AmulStockTracker.get_instance()
+    await stock_tracker.load_history_for_substore(substore)
+    stock_tracker.record_batch_observations(products, substore=substore)
+    stock_histories = {
+        p.get("sku"): stock_tracker.get_history(p.get("sku", ""), substore)
+        for p in products
+        if p.get("sku")
+    }
+
+    user_subs = await tracker_service.list_user_subscriptions(user.telegram_id)
+    tracked_skus = {s[1].external_variant_id for s in user_subs if s[1].provider_code == "amul"}
+    fav_skus = set(user.favourite_skus or [])
+    ao_skus = set(user.auto_order_skus or [])
+    bot_username = context.bot.username or "wheypricewatch_bot"
+
+    messages = format_amul_search_messages(
+        query=query,
+        pincode=pincode,
+        substore=substore,
+        products=products,
+        tracked_skus=tracked_skus,
+        favourite_skus=fav_skus,
+        auto_order_skus=ao_skus,
+        bot_username=bot_username,
+        stock_histories=stock_histories,
+    )
+
+    await wait_msg.delete()
+    for chunk in messages:
+        await update.effective_message.reply_html(chunk, disable_web_page_preview=True)
+
+
+async def favourites_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /favourites command to list user's starred products."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(
+        telegram_id=update.effective_user.id,
+        username=update.effective_user.username,
+        first_name=update.effective_user.first_name,
+    )
+    fav_skus = set(user.favourite_skus or [])
+    pincode = user.default_pincode or "842002"
+
+    if not fav_skus:
+        await update.effective_message.reply_html(
+            "⭐ <b>You have no favourites yet.</b>\n\n"
+            "Browse products with <code>/amul</code> or search with <code>/search</code> and tap <b>[Favourite]</b> on any item to save it here!"
+        )
+        return
+
+    wait_msg = await update.effective_message.reply_text("⭐ Fetching your favourite products...")
+    amul_provider = AmulProvider()
+    substore = await amul_provider.resolve_substore_for_pincode(pincode)
+
+    # Fetch protein & dairy products to resolve favourite items
+    all_prods = await amul_provider.fetch_category_products("protein", pincode=pincode, limit=100)
+    fav_products = [p for p in all_prods if p.get("sku") in fav_skus]
+
+    stock_tracker = AmulStockTracker.get_instance()
+    await stock_tracker.load_history_for_substore(substore)
+    stock_tracker.record_batch_observations(fav_products, substore=substore)
+    stock_histories = {
+        p.get("sku"): stock_tracker.get_history(p.get("sku", ""), substore)
+        for p in fav_products
+        if p.get("sku")
+    }
+
+    user_subs = await tracker_service.list_user_subscriptions(user.telegram_id)
+    tracked_skus = {s[1].external_variant_id for s in user_subs if s[1].provider_code == "amul"}
+    ao_skus = set(user.auto_order_skus or [])
+    bot_username = context.bot.username or "wheypricewatch_bot"
+
+    messages = format_amul_favourites_messages(
+        pincode=pincode,
+        substore=substore,
+        products=fav_products,
+        tracked_skus=tracked_skus,
+        favourite_skus=fav_skus,
+        auto_order_skus=ao_skus,
+        bot_username=bot_username,
+        stock_histories=stock_histories,
+    )
+
+    await wait_msg.delete()
+    for chunk in messages:
+        await update.effective_message.reply_html(chunk, disable_web_page_preview=True)
+
+
+async def analytics_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /analytics command."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+    pincode = user.default_pincode or "842002"
+
+    wait_msg = await update.effective_message.reply_text("📊 Generating warehouse analytics...")
+    amul_provider = AmulProvider()
+    substore = await amul_provider.resolve_substore_for_pincode(pincode)
+    products = await amul_provider.fetch_category_products("protein", pincode=pincode, limit=100)
+
+    user_subs = await tracker_service.list_user_subscriptions(user.telegram_id)
+    tracked_count = sum(1 for s in user_subs if s[1].provider_code == "amul")
+
+    text = format_amul_analytics(
+        substore=substore,
+        pincode=pincode,
+        products=products,
+        user_tracked_count=tracked_count,
+    )
+    await wait_msg.delete()
+    await update.effective_message.reply_html(text)
+
+
+async def productcount_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /productcount and /count commands."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+    pincode = user.default_pincode or "842002"
+
+    wait_msg = await update.effective_message.reply_text("📦 Fetching stock count tables...")
+    amul_provider = AmulProvider()
+    products = await amul_provider.fetch_category_products("protein", pincode=pincode, limit=100)
+
+    text = format_amul_product_count(products)
+    await wait_msg.delete()
+    await update.effective_message.reply_html(text)
+
+
+async def settings_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /settings command."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+
+    text = format_settings_menu(user)
+    kb = build_settings_keyboard(user)
+    await update.effective_message.reply_html(text, reply_markup=kb)
+
+
+async def autoorder_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /autoorder command and sub-actions (login, otp, toggle, add, remove)."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+    ao_service = AmulAutoOrderService()
+
+    args = context.args if isinstance(context.args, list) else []
+    if not args:
+        text = format_auto_order_overview(user)
+        await update.effective_message.reply_html(text)
+        return
+
+    subaction = args[0].lower()
+
+    if subaction == "login":
+        if len(args) < 2:
+            await update.effective_message.reply_html("⚠️ <b>Usage:</b> <code>/autoorder login &lt;10-digit-mobile&gt;</code>")
+            return
+        phone = args[1]
+        pincode = user.default_pincode or "842002"
+        res = await ao_service.request_otp(phone=phone, pincode=pincode)
+        if res["success"]:
+            await tracker_service.update_user_settings(user.telegram_id, auto_order_phone=res["phone"])
+            await update.effective_message.reply_html(
+                f"✅ {res['message']}\n\n"
+                "To finish, type: <code>/autoorder otp &lt;6-digit-code&gt;</code>"
+            )
+        else:
+            await update.effective_message.reply_html(f"❌ {res['message']}")
+        return
+
+    if subaction == "otp":
+        if len(args) < 2:
+            await update.effective_message.reply_html("⚠️ <b>Usage:</b> <code>/autoorder otp &lt;6-digit-code&gt;</code>")
+            return
+        otp = args[1]
+        phone = user.auto_order_phone or ""
+        if not phone:
+            await update.effective_message.reply_html("❌ Please request an OTP first using <code>/autoorder login &lt;phone&gt;</code>")
+            return
+        pincode = user.default_pincode or "842002"
+        res = await ao_service.verify_otp(phone=phone, otp=otp, pincode=pincode)
+        if res["success"]:
+            await tracker_service.update_user_settings(
+                user.telegram_id,
+                auto_order_auth_token=res["auth_token"],
+                auto_order_address_id=res.get("address_id", "addr_primary"),
+                auto_order_enabled=True,
+            )
+            await update.effective_message.reply_html(f"🎉 {res['message']}\n\nAuto-order is now <b>ENABLED 🟢</b>!")
+        else:
+            await update.effective_message.reply_html(f"❌ {res['message']}")
+        return
+
+    if subaction == "toggle":
+        new_state = not user.auto_order_enabled
+        await tracker_service.update_user_settings(user.telegram_id, auto_order_enabled=new_state)
+        state_label = "ENABLED 🟢" if new_state else "DISABLED ⚪"
+        await update.effective_message.reply_html(f"⚡ Auto-Order status updated: <b>{state_label}</b>")
+        return
+
+    if subaction == "add":
+        if len(args) < 2:
+            await update.effective_message.reply_html("⚠️ <b>Usage:</b> <code>/autoorder add &lt;sku&gt;</code>")
+            return
+        sku = args[1].strip()
+        skus = list(set((user.auto_order_skus or []) + [sku]))
+        await tracker_service.update_user_settings(user.telegram_id, auto_order_skus=skus, auto_order_enabled=True)
+        await update.effective_message.reply_html(f"✅ Added <code>{sku}</code> to auto-order list!")
+        return
+
+    if subaction == "remove":
+        if len(args) < 2:
+            await update.effective_message.reply_html("⚠️ <b>Usage:</b> <code>/autoorder remove &lt;sku&gt;</code>")
+            return
+        sku = args[1].strip()
+        skus = [s for s in (user.auto_order_skus or []) if s != sku]
+        await tracker_service.update_user_settings(user.telegram_id, auto_order_skus=skus)
+        await update.effective_message.reply_html(f"🗑️ Removed <code>{sku}</code> from auto-order list.")
+        return
+
+    # Fallback
+    await update.effective_message.reply_html(format_auto_order_overview(user))
 
 
 async def history_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

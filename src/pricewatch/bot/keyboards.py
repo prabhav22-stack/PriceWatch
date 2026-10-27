@@ -3,7 +3,7 @@
 from typing import List, Sequence, Set
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from pricewatch.domain.models import VariantOption
+from pricewatch.domain.models import CanonicalListing, User, VariantOption
 from pricewatch.validation.normalizer import format_paise_to_inr
 
 
@@ -27,6 +27,27 @@ def build_variant_selection_keyboard(
 
     keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel")])
     return InlineKeyboardMarkup(keyboard)
+
+
+def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
+    """Settings interactive controls for style, max notifications, and auto-order."""
+    style_toggle = "Once 1️⃣" if user.tracking_style == "always" else "Always 🔄"
+    ao_toggle = "Disable ⚪" if user.auto_order_enabled else "Enable 🟢"
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
+        ],
+        [
+            InlineKeyboardButton("Max: 1 Alert", callback_data="cfg:max:1"),
+            InlineKeyboardButton("Max: 3 Alerts", callback_data="cfg:max:3"),
+            InlineKeyboardButton("Max: 5 Alerts", callback_data="cfg:max:5"),
+        ],
+        [
+            InlineKeyboardButton(f"Auto-Order: {ao_toggle}", callback_data="cfg:toggle_ao"),
+        ],
+    ])
+
 
 
 def build_untrack_keyboard(listing_id: int) -> InlineKeyboardMarkup:
@@ -114,3 +135,24 @@ def build_amul_product_stock_keyboard(
 
     keyboard.append([InlineKeyboardButton("⬅️ Back to Categories", callback_data="amul_menu")])
     return InlineKeyboardMarkup(keyboard)
+
+
+def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
+    """Settings interactive controls for style, max notifications, and auto-order."""
+    style_toggle = "Once 1️⃣" if user.tracking_style == "always" else "Always 🔄"
+    ao_toggle = "Disable ⚪" if user.auto_order_enabled else "Enable 🟢"
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
+        ],
+        [
+            InlineKeyboardButton("Max: 1 Alert", callback_data="cfg:max:1"),
+            InlineKeyboardButton("Max: 3 Alerts", callback_data="cfg:max:3"),
+            InlineKeyboardButton("Max: 5 Alerts", callback_data="cfg:max:5"),
+        ],
+        [
+            InlineKeyboardButton(f"Auto-Order: {ao_toggle}", callback_data="cfg:toggle_ao"),
+        ],
+    ])
+

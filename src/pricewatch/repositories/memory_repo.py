@@ -58,6 +58,24 @@ class MemoryRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             if sub.telegram_id == telegram_id:
                 self.subscriptions[sub_id] = sub.model_copy(update={"is_active": False})
 
+    async def toggle_favourite_sku(self, telegram_id: int, sku: str) -> bool:
+        user = await self.get_or_create_user(telegram_id)
+        favs = list(user.favourite_skus or [])
+        if sku in favs:
+            favs.remove(sku)
+            added = False
+        else:
+            favs.append(sku)
+            added = True
+        self.users[telegram_id] = user.model_copy(update={"favourite_skus": favs})
+        return added
+
+    async def update_user_settings(self, telegram_id: int, **kwargs) -> User:
+        user = await self.get_or_create_user(telegram_id)
+        updated = user.model_copy(update=kwargs)
+        self.users[telegram_id] = updated
+        return updated
+
     # --- Listing Repo ---
     async def get_or_create_listing(self, listing: CanonicalListing) -> CanonicalListing:
         for existing in self.listings.values():

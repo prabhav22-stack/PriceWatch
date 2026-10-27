@@ -28,6 +28,14 @@ class BaseUserRepo(ABC):
     async def deactivate_user(self, telegram_id: int) -> None:
         """Mark user as inactive when they block the bot."""
 
+    @abstractmethod
+    async def toggle_favourite_sku(self, telegram_id: int, sku: str) -> bool:
+        """Toggle a product SKU in user's favourite list. Returns True if added, False if removed."""
+
+    @abstractmethod
+    async def update_user_settings(self, telegram_id: int, **kwargs) -> User:
+        """Update user preferences and return updated User."""
+
 
 class BaseListingRepo(ABC):
     @abstractmethod

@@ -29,7 +29,7 @@ async def run_amul_poller(
     """
     logger.info("Starting high-frequency Amul background poller...", interval_seconds=interval_seconds)
     provider = AmulProvider()
-    alert_service = AlertService(subscription_repo=repo, bot=bot)
+    alert_service = AlertService(subscription_repo=repo, bot=bot, user_repo=repo)
 
     while True:
         try:

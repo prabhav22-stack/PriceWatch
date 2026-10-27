@@ -14,11 +14,17 @@ from telegram.ext import (
 from pricewatch.bot.handlers.callbacks import callback_query_dispatcher
 from pricewatch.bot.handlers.commands import (
     amul_command_handler,
+    analytics_command_handler,
+    autoorder_command_handler,
+    favourites_command_handler,
     help_handler,
     history_command_handler,
     list_handler,
     pincode_handler,
     plain_text_handler,
+    productcount_command_handler,
+    search_command_handler,
+    settings_command_handler,
     start_handler,
     status_handler,
     track_handler,
@@ -56,6 +62,14 @@ def create_telegram_app(
     app.add_handler(CommandHandler("status", status_handler))
     app.add_handler(CommandHandler("amul", amul_command_handler))
     app.add_handler(CommandHandler("products", amul_command_handler))
+    app.add_handler(CommandHandler("search", search_command_handler))
+    app.add_handler(CommandHandler("favourites", favourites_command_handler))
+    app.add_handler(CommandHandler("favorites", favourites_command_handler))
+    app.add_handler(CommandHandler("analytics", analytics_command_handler))
+    app.add_handler(CommandHandler("productcount", productcount_command_handler))
+    app.add_handler(CommandHandler("count", productcount_command_handler))
+    app.add_handler(CommandHandler("settings", settings_command_handler))
+    app.add_handler(CommandHandler("autoorder", autoorder_command_handler))
     app.add_handler(CommandHandler("history", history_command_handler))
 
     # Catch /untrack_123 and /history_123 shorthand commands

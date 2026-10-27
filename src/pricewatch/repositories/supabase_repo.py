@@ -59,6 +59,29 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         self.client.table("users").update({"is_active": False}).eq("telegram_id", telegram_id).execute()
         self.client.table("subscriptions").update({"is_active": False}).eq("telegram_id", telegram_id).execute()
 
+    async def toggle_favourite_sku(self, telegram_id: int, sku: str) -> bool:
+        user = await self.get_or_create_user(telegram_id)
+        favs = list(user.favourite_skus or [])
+        if sku in favs:
+            favs.remove(sku)
+            added = False
+        else:
+            favs.append(sku)
+            added = True
+        self.client.table("users").update(
+            {"favourite_skus": favs, "updated_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("telegram_id", telegram_id).execute()
+        return added
+
+    async def update_user_settings(self, telegram_id: int, **kwargs) -> User:
+        payload = dict(kwargs)
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        res = self.client.table("users").update(payload).eq("telegram_id", telegram_id).execute()
+        row = res.data[0] if res.data else None
+        if row:
+            return User(**row)
+        return await self.get_or_create_user(telegram_id)
+
     # --- Listing Repo ---
     async def get_or_create_listing(self, listing: CanonicalListing) -> CanonicalListing:
         query = (
