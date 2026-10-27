@@ -1,17 +1,19 @@
-"""High-frequency background poller for Amul Shop products.
+"""High-frequency background batch poller for Amul Shop products.
 
-Runs directly inside the Render web process to check active Amul products
-every 60 seconds with zero additional server or database costs.
+Runs directly inside the Render web process to check the entire Amul protein catalog
+every 60 seconds using StoreHippo's batch category endpoint (~200ms for all 24 items).
+Supports instant restock alerts for explicitly tracked products, starred favourites,
+and 'all protein' subscribers with zero Redis or BullMQ overhead.
 """
 
 import asyncio
 import random
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, List, Set
 
+from pricewatch.domain.models import CanonicalListing, PriceQuote, Subscription, User
 from pricewatch.logging_setup import get_logger
 from pricewatch.providers.amul import AmulProvider
-from pricewatch.repositories.base import BaseListingRepo, BaseSubscriptionRepo
 from pricewatch.services.alert_service import AlertService
 from pricewatch.services.amul_stock_tracker import AmulStockTracker
 
@@ -24,62 +26,167 @@ async def run_amul_poller(
     interval_seconds: int = 60,
 ) -> None:
     """
-    Continuous in-memory loop polling active Amul listings every 60 seconds.
-    Directly checks StoreHippo REST API (~200ms per SKU) and dispatches instant Telegram restock alerts.
+    Continuous in-memory loop polling Amul catalog every 60 seconds.
+    Fetches the entire protein category in a single batch API call (~200ms) for each registered user pincode.
+    Automatically updates real-time warehouse inventory and dispatches instant Telegram restock alerts.
     """
-    logger.info("Starting high-frequency Amul background poller...", interval_seconds=interval_seconds)
+    logger.info("Starting high-frequency Amul background batch poller...", interval_seconds=interval_seconds)
     provider = AmulProvider()
     alert_service = AlertService(subscription_repo=repo, bot=bot, user_repo=repo)
 
     while True:
         try:
-            # 1. Fetch all active Amul listings
-            listings = await repo.get_active_listings_by_provider("amul")
-            if listings:
-                logger.info("Fast Amul poller checking active items", count=len(listings))
+            # 1. Fetch active listings and registered users to collect all unique pincodes
+            active_amul_listings = await repo.get_active_listings_by_provider("amul")
+            pincodes: Set[str] = set()
+            for l in active_amul_listings:
+                if l.pincode and len(str(l.pincode).strip()) == 6:
+                    pincodes.add(str(l.pincode).strip())
 
-            for listing in listings:
+            users: List[User] = []
+            try:
+                if hasattr(repo, "get_all_active_users"):
+                    users = await repo.get_all_active_users()
+            except Exception as u_err:
+                logger.warning("Could not fetch active users in poller", error=str(u_err))
+
+            for u in users:
+                pin = u.default_pincode
+                if pin and len(str(pin).strip()) == 6:
+                    pincodes.add(str(pin).strip())
+
+            if not pincodes:
+                pincodes.add("842002")
+
+            # 3. Batch check Amul catalog for each pincode
+            for pincode in pincodes:
                 try:
-                    sku = listing.external_variant_id or listing.external_product_id
-                    pincode = listing.pincode or "110001"
-                    quote = await provider.fetch_quote(
-                        canonical_url=listing.canonical_url,
-                        external_product_id=sku,
-                        external_variant_id=sku,
-                        pincode=pincode,
+                    category_items = await provider.fetch_category_products(
+                        category_id="protein", pincode=pincode, limit=100
                     )
+                    substore = await provider.resolve_substore_for_pincode(pincode)
 
-                    # Update listing's last recorded inventory & availability
-                    await repo.update_listing_state(
-                        listing_id=listing.id,
-                        last_price_paise=quote.price_paise,
-                        last_mrp_paise=quote.mrp_paise,
-                        last_available=quote.available,
-                        next_check_at=datetime.now(timezone.utc),
-                        consecutive_failures=0,
-                    )
+                    relevant_users = [
+                        u for u in users
+                        if (u.default_pincode and u.default_pincode.strip() == pincode) or len(users) == 1
+                    ]
+                    if not relevant_users and users:
+                        relevant_users = users
 
-                    # Update stock history transition tracking
-                    try:
-                        substore = await provider.resolve_substore_for_pincode(pincode)
-                        AmulStockTracker.get_instance().record_observation(
-                            sku=sku,
-                            substore=substore,
-                            is_available=quote.available,
+                    processed_skus: Set[str] = set()
+
+                    for item in category_items:
+                        sku = item.get("sku")
+                        if not sku:
+                            continue
+                        processed_skus.add(sku)
+
+                        is_avail = bool(item.get("available", False))
+                        eff_qty = item.get("inventory_quantity")
+                        price_paise = item.get("price_paise") or 0
+                        mrp_paise = item.get("mrp_paise")
+                        name = item.get("name") or sku
+                        alias = item.get("alias") or sku
+                        clean_alias = alias.replace(" ", "") if alias else sku
+                        url = item.get("url") or f"https://shop.amul.com/en/product/{clean_alias}"
+
+                        quote = PriceQuote(
+                            external_product_id=sku,
+                            external_variant_id=sku,
+                            price_paise=price_paise,
+                            mrp_paise=mrp_paise,
+                            currency="INR",
+                            available=is_avail,
+                            inventory_quantity=eff_qty,
+                            verified_pincode=pincode,
+                            extraction_method="amul_storehippo_batch",
+                            raw_variant_title=name,
                         )
-                    except Exception as hist_err:
-                        logger.warning("Failed updating stock tracker history in poller", error=str(hist_err))
 
-                    # Evaluate alerts & dispatch Telegram message if restocked
-                    await alert_service.process_quote(listing, quote)
+                        # Get or create listing in database
+                        new_listing = CanonicalListing(
+                            provider_code="amul",
+                            provider_tier=1,
+                            external_product_id=sku,
+                            external_variant_id=sku,
+                            pincode=pincode,
+                            canonical_url=url,
+                            product_title=name,
+                            variant_title="Standard Pack",
+                            currency="INR",
+                            last_price_paise=price_paise,
+                            last_mrp_paise=mrp_paise,
+                            last_available=is_avail,
+                            inventory_quantity=eff_qty,
+                            is_monitored=True,
+                        )
+                        listing = await repo.get_or_create_listing(new_listing)
 
-                except Exception as exc:
-                    logger.warning(
-                        "Error checking Amul listing in fast loop",
-                        listing_id=listing.id,
-                        sku=listing.external_variant_id,
-                        error=str(exc),
-                    )
+                        # Update real-time listing state
+                        await repo.update_listing_state(
+                            listing_id=listing.id,
+                            last_price_paise=price_paise,
+                            last_mrp_paise=mrp_paise,
+                            last_available=is_avail,
+                            next_check_at=datetime.now(timezone.utc),
+                            consecutive_failures=0,
+                        )
+
+                        # Update stock history transition tracking
+                        try:
+                            AmulStockTracker.get_instance().record_observation(
+                                sku=sku,
+                                substore=substore,
+                                is_available=is_avail,
+                            )
+                        except Exception as hist_err:
+                            logger.warning("Failed updating stock tracker history in batch poller", error=str(hist_err))
+
+                        # Auto-subscribe users who marked this item as favourite or enabled ALL_PROTEIN
+                        current_subs = await repo.get_active_subscriptions_for_listing(listing.id)
+                        subscribed_tg_ids = {s.telegram_id for s in current_subs}
+
+                        for u in relevant_users:
+                            favs = u.favourite_skus or []
+                            should_track = (sku in favs) or ("ALL_PROTEIN" in favs)
+                            if should_track and u.telegram_id not in subscribed_tg_ids:
+                                await repo.create_or_update_subscription(
+                                    Subscription(
+                                        telegram_id=u.telegram_id,
+                                        listing_id=listing.id,
+                                        target_price_paise=price_paise or 0,
+                                        notify_on_restock=True,
+                                        is_active=True,
+                                        alert_rearmed=True,
+                                    )
+                                )
+
+                        # Dispatch alert if restocked
+                        await alert_service.process_quote(listing, quote)
+
+                    # Also check any standalone monitored Amul listings outside the category
+                    active_amul_listings = await repo.get_active_listings_by_provider("amul")
+                    for l in active_amul_listings:
+                        sku = l.external_variant_id or l.external_product_id
+                        if sku not in processed_skus:
+                            try:
+                                q = await provider.fetch_quote(
+                                    l.canonical_url, sku, sku, pincode=l.pincode or pincode
+                                )
+                                await repo.update_listing_state(
+                                    listing_id=l.id,
+                                    last_price_paise=q.price_paise,
+                                    last_mrp_paise=q.mrp_paise,
+                                    last_available=q.available,
+                                    next_check_at=datetime.now(timezone.utc),
+                                    consecutive_failures=0,
+                                )
+                                await alert_service.process_quote(l, q)
+                            except Exception as standalone_err:
+                                logger.warning("Error checking standalone Amul listing", sku=sku, error=str(standalone_err))
+
+                except Exception as batch_err:
+                    logger.warning("Failed batch checking Amul category for pincode", pincode=pincode, error=str(batch_err))
 
         except asyncio.CancelledError:
             logger.info("Amul background poller shutting down.")
@@ -87,7 +194,6 @@ async def run_amul_poller(
         except Exception as exc:
             logger.error("Unexpected error in Amul poller loop", error=str(exc))
 
-        # Add randomized cadence jitter (+/- 4s) to eliminate clockwork bot signatures
         jitter = random.uniform(-4.0, 4.0)
         sleep_duration = max(5.0, interval_seconds + jitter)
         await asyncio.sleep(sleep_duration)

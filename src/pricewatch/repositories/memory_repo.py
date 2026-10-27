@@ -76,6 +76,9 @@ class MemoryRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         self.users[telegram_id] = updated
         return updated
 
+    async def get_all_active_users(self) -> List[User]:
+        return [u for u in self.users.values() if u.is_active]
+
     # --- Listing Repo ---
     async def get_or_create_listing(self, listing: CanonicalListing) -> CanonicalListing:
         for existing in self.listings.values():

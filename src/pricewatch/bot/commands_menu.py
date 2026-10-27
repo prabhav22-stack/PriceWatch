@@ -16,6 +16,7 @@ DEFAULT_BOT_COMMANDS: List[BotCommand] = [
     BotCommand("pincode", "Get your current pincode"),
     BotCommand("products", "Browse Amul products"),
     BotCommand("autoorder", "Toggle auto-ordering of products"),
+    BotCommand("trackall", "Toggle restock alerts for all protein items"),
     BotCommand("settings", "View or change your settings"),
     BotCommand("tracked", "List all tracked products"),
     BotCommand("favourites", "List your favourite products"),

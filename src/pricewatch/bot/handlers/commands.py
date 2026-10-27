@@ -663,6 +663,36 @@ async def autoorder_command_handler(update: Update, context: ContextTypes.DEFAUL
     await update.effective_message.reply_html(format_auto_order_overview(user))
 
 
+async def trackall_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle automated restock alerts for all Amul protein items."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+    favs = list(user.favourite_skus or [])
+
+    if "ALL_PROTEIN" in favs:
+        favs.remove("ALL_PROTEIN")
+        await tracker_service.update_user_settings(user.telegram_id, favourite_skus=favs)
+        await update.effective_message.reply_html(
+            "🔕 <b>All-Protein Restock Alerts: DISABLED</b>\n\n"
+            "You will now only receive restock notifications for items specifically in your "
+            "<code>/tracked</code> list or <code>/favourites</code>."
+        )
+    else:
+        favs.append("ALL_PROTEIN")
+        await tracker_service.update_user_settings(user.telegram_id, favourite_skus=favs)
+        pincode = user.default_pincode or "842002"
+        await update.effective_message.reply_html(
+            "🔔 <b>All-Protein Restock Alerts: ACTIVATED!</b>\n\n"
+            f"You will now receive instant restock alerts whenever <b>ANY</b> Amul protein product "
+            f"(Whey, Buttermilk, Lassi, Milkshakes, Paneer) comes into stock for delivery pincode <code>{pincode}</code>!\n\n"
+            "• Type <code>/trackall</code> again anytime to turn it off.\n"
+            "• Configure notifications or auto-order with <code>/settings</code>."
+        )
+
+
 async def history_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /history <listing_id> or /history_<listing_id> to generate price trend chart."""
     if not update.effective_user or not update.effective_message:

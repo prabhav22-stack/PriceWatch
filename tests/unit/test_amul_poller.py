@@ -7,7 +7,7 @@ import respx
 import httpx
 
 from pricewatch.domain.enums import AlertType
-from pricewatch.domain.models import CanonicalListing, PriceQuote, Subscription
+from pricewatch.domain.models import CanonicalListing, PriceQuote, Subscription, User
 from pricewatch.providers.amul import SHOP_URL
 from pricewatch.repositories.memory_repo import MemoryRepository
 from pricewatch.services.amul_poller import run_amul_poller
@@ -98,3 +98,64 @@ async def test_run_amul_poller_detects_restock_and_alerts():
     assert "AMUL PRODUCT BACK IN STOCK" in msg_text
     assert "75 units" in msg_text
     assert "Amul High Protein Buttermilk" in msg_text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_run_amul_poller_auto_subscribes_favourite_and_all_protein():
+    repo = MemoryRepository()
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+
+    # User with favourite and ALL_PROTEIN enabled
+    user = User(
+        telegram_id=12345,
+        default_pincode="842002",
+        favourite_skus=["ALL_PROTEIN"],
+    )
+    repo.users[12345] = user
+
+    # Mock Amul API
+    respx.get(url__startswith=f"{SHOP_URL}/entity/pincode").mock(
+        return_value=httpx.Response(200, json={"records": [{"substore": "bihar", "pincode": "842002"}]})
+    )
+    respx.put(f"{SHOP_URL}/entity/ms.settings/_/setPreferences").mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    respx.get(f"{SHOP_URL}/en/browse/protein").mock(return_value=httpx.Response(200, text="ok"))
+    respx.get(url__startswith=f"{SHOP_URL}/user/info.js").mock(
+        return_value=httpx.Response(200, text='session = {"tid": "test_tid"};')
+    )
+    respx.get(url__startswith=f"{SHOP_URL}/api/1/entity/ms.products").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "name": "Amul High Protein Buttermilk, 200 mL | Pack of 30",
+                        "sku": "BTMCP11_30",
+                        "price": 799,
+                        "available": 1,
+                        "inventory_quantity": 469,
+                        "inventory_low_stock_quantity": 10,
+                    }
+                ]
+            },
+        )
+    )
+
+    task = asyncio.create_task(run_amul_poller(repo=repo, bot=bot, interval_seconds=1))
+    await asyncio.sleep(0.3)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    # Verify user received restock alert automatically!
+    bot.send_message.assert_called_once()
+    call_args = bot.send_message.call_args
+    assert call_args[1]["chat_id"] == 12345
+    msg = call_args[1]["text"]
+    assert "AMUL PRODUCT BACK IN STOCK" in msg
+    assert "BTMCP11_30" in msg or "Buttermilk" in msg

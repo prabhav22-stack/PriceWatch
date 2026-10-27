@@ -197,9 +197,14 @@ class AlertService:
                 continue
 
             # 2. Phase 1: Outbox row with deterministic idempotency key
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            price_for_key = quote.price_paise or quote.inventory_quantity or 0
-            idempotency_key = f"{sub.id}:{alert_type.value}:{price_for_key}:{today_str}"
+            if alert_type == AlertType.AMUL_RESTOCK:
+                # 2-minute deduplication window; allows fresh restock alerts if item goes OOS and returns
+                bucket = int(datetime.now(timezone.utc).timestamp() // 120)
+                idempotency_key = f"{sub.id}:amul_restock:{quote.inventory_quantity}:{bucket}"
+            else:
+                today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                price_for_key = quote.price_paise or quote.inventory_quantity or 0
+                idempotency_key = f"{sub.id}:{alert_type.value}:{price_for_key}:{today_str}"
 
             notif = NotificationLog(
                 subscription_id=sub.id,

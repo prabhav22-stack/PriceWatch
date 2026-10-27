@@ -36,6 +36,10 @@ class BaseUserRepo(ABC):
     async def update_user_settings(self, telegram_id: int, **kwargs) -> User:
         """Update user preferences and return updated User."""
 
+    @abstractmethod
+    async def get_all_active_users(self) -> List[User]:
+        """Fetch all active registered users."""
+
 
 class BaseListingRepo(ABC):
     @abstractmethod

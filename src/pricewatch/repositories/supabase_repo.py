@@ -82,6 +82,10 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             return User(**row)
         return await self.get_or_create_user(telegram_id)
 
+    async def get_all_active_users(self) -> List[User]:
+        res = self.client.table("users").select("*").eq("is_active", True).execute()
+        return [User(**row) for row in res.data]
+
     # --- Listing Repo ---
     async def get_or_create_listing(self, listing: CanonicalListing) -> CanonicalListing:
         query = (

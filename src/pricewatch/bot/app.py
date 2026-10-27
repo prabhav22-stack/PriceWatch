@@ -32,6 +32,7 @@ from pricewatch.bot.handlers.commands import (
     status_handler,
     support_handler,
     track_handler,
+    trackall_command_handler,
     untrack_handler,
 )
 from pricewatch.config import settings
@@ -62,6 +63,7 @@ def create_telegram_app(
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CommandHandler("help", help_handler))
     app.add_handler(CommandHandler("track", track_handler))
+    app.add_handler(CommandHandler("trackall", trackall_command_handler))
     app.add_handler(CommandHandler("list", list_handler))
     app.add_handler(CommandHandler("tracked", list_handler))
     app.add_handler(CommandHandler("untrack", untrack_handler))

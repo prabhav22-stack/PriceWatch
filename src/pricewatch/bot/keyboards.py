@@ -33,8 +33,12 @@ def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
     """Settings interactive controls for style, max notifications, and auto-order."""
     style_toggle = "Once 1️⃣" if user.tracking_style == "always" else "Always 🔄"
     ao_toggle = "Disable ⚪" if user.auto_order_enabled else "Enable 🟢"
+    all_protein_toggle = "Turn Off 🔕" if "ALL_PROTEIN" in (user.favourite_skus or []) else "Turn On 🔔"
 
     return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"All Protein Alerts: {all_protein_toggle}", callback_data="cfg:toggle_all_protein"),
+        ],
         [
             InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
         ],
@@ -141,8 +145,12 @@ def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
     """Settings interactive controls for style, max notifications, and auto-order."""
     style_toggle = "Once 1️⃣" if user.tracking_style == "always" else "Always 🔄"
     ao_toggle = "Disable ⚪" if user.auto_order_enabled else "Enable 🟢"
+    all_protein_toggle = "Turn Off 🔕" if "ALL_PROTEIN" in (user.favourite_skus or []) else "Turn On 🔔"
 
     return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"All Protein Alerts: {all_protein_toggle}", callback_data="cfg:toggle_all_protein"),
+        ],
         [
             InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
         ],

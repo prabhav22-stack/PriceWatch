@@ -274,6 +274,13 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             elif cfg_action == "toggle_ao":
                 new_ao = not user.auto_order_enabled
                 user = await tracker_service.update_user_settings(user_id, auto_order_enabled=new_ao)
+            elif cfg_action == "toggle_all_protein":
+                favs = list(user.favourite_skus or [])
+                if "ALL_PROTEIN" in favs:
+                    favs.remove("ALL_PROTEIN")
+                else:
+                    favs.append("ALL_PROTEIN")
+                user = await tracker_service.update_user_settings(user_id, favourite_skus=favs)
 
             text = format_settings_menu(user)
             kb = build_settings_keyboard(user)

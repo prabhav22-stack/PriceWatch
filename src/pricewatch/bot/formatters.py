@@ -441,15 +441,19 @@ def format_settings_menu(user: User) -> str:
     """Format user preferences and alert settings overview."""
     style_label = "Always 🔄" if user.tracking_style == "always" else "Once 1️⃣"
     ao_label = "Enabled 🟢" if user.auto_order_enabled else "Disabled ⚪"
+    all_protein_active = "ALL_PROTEIN" in (user.favourite_skus or [])
+    all_protein_label = "Active 🔔 (All Items)" if all_protein_active else "Inactive 🔕 (Tracked/Favs Only)"
     phone_label = user.auto_order_phone or "Not configured"
 
     return (
         "⚙️ <b>Notification & Tracking Settings</b>\n\n"
         f"• <b>Default Pincode:</b> <code>{user.default_pincode or '842002'}</code>\n"
+        f"• <b>All Protein Restock Alerts:</b> <b>{all_protein_label}</b>\n"
         f"• <b>Tracking Style:</b> <b>{style_label}</b>\n"
         f"• <b>Max Alerts per Product:</b> <b>{user.max_notify_count}</b>\n"
         f"• <b>Auto-Order Checkout:</b> <b>{ao_label}</b> ({phone_label})\n\n"
         "<b>Explanation of Options:</b>\n"
+        "• <b>All Protein Alerts</b>: Instant alert when ANY protein item restocks in your warehouse.\n"
         "• <b>Always</b>: Keeps tracking the product across restock cycles.\n"
         "• <b>Once</b>: Alerts once when available, then automatically untracks to reduce spam.\n"
         "• <b>Max Alerts</b>: Maximum restock alerts before pausing notifications."

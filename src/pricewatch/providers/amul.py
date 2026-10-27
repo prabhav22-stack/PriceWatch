@@ -209,10 +209,7 @@ class AmulProvider(BaseProvider):
             headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
 
             query = (
-                "fields[name]=1&fields[alias]=1&fields[sku]=1&fields[price]=1&fields[compare_price]=1"
-                "&fields[available]=1&fields[inventory_quantity]=1&fields[inventory_low_stock_quantity]=1"
-                "&fields[inventory_allow_out_of_stock]=1&fields[images]=1&fields[net_quantity]=1&fields[metafields]=1"
-                f"&filters[0][field]=categories&filters[0][value][0]={category_id}&filters[0][operator]=in"
+                f"filters[0][field]=categories&filters[0][value][0]={category_id}&filters[0][operator]=in"
                 f"&filters[0][original]=1&limit={limit}&start=0&v=6"
             )
             url = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
@@ -370,11 +367,10 @@ class AmulProvider(BaseProvider):
             tid_hdr = self.calculate_tid_header(tid)
             headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
 
+            # Query within protein category with v=6 first to trigger StoreHippo regional substore computation
             query = (
-                f"filters[0][field]=sku&filters[0][value]={sku}&filters[0][operator]=equal"
-                "&fields[name]=1&fields[sku]=1&fields[price]=1&fields[compare_price]=1"
-                "&fields[available]=1&fields[inventory_quantity]=1&fields[inventory_low_stock_quantity]=1"
-                "&fields[inventory_allow_out_of_stock]=1&limit=1"
+                "filters[0][field]=categories&filters[0][value][0]=protein&filters[0][operator]=in&filters[0][original]=1"
+                f"&filters[1][field]=sku&filters[1][value]={sku}&filters[1][operator]=equal&v=6"
             )
             url_api = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
             resp = await client.get(url_api, headers=headers)
@@ -390,6 +386,13 @@ class AmulProvider(BaseProvider):
 
             data = resp.json()
             items = data.get("data", [])
+            # If not found in protein category, fallback to SKU query with v=6
+            if not items:
+                fallback_query = f"filters[0][field]=sku&filters[0][value]={sku}&filters[0][operator]=equal&v=6"
+                resp = await client.get(f"{SHOP_URL}/api/1/entity/ms.products?{fallback_query}", headers=headers)
+                if resp.status_code == 200:
+                    items = resp.json().get("data", [])
+
             if not items:
                 raise ExtractionError(f"Amul SKU {sku} not found for substore {substore}")
 
