@@ -159,3 +159,72 @@ async def test_run_amul_poller_auto_subscribes_favourite_and_all_protein():
     msg = call_args[1]["text"]
     assert "AMUL PRODUCT BACK IN STOCK" in msg
     assert "BTMCP11_30" in msg or "Buttermilk" in msg
+
+
+@pytest.mark.asyncio
+async def test_alert_service_dynamic_stock_decrease_alert():
+    from pricewatch.services.alert_service import AlertService
+
+    repo = MemoryRepository()
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+
+    # User configured with 3 repeat alerts
+    user = User(
+        telegram_id=55555,
+        default_pincode="842002",
+        max_notify_count=3,
+    )
+    repo.users[55555] = user
+
+    listing = CanonicalListing(
+        id=1,
+        provider_code="amul",
+        external_product_id="BTMCP11_30",
+        external_variant_id="BTMCP11_30",
+        pincode="842002",
+        canonical_url="https://shop.amul.com/en/product/amul-high-protein-buttermilk-200-ml-or-pack-of-30",
+        product_title="Amul High Protein Buttermilk, 200 mL | Pack of 30",
+        last_price_paise=79900,
+        last_available=True,
+    )
+    repo.listings[1] = listing
+
+    sub = Subscription(
+        id=10,
+        telegram_id=55555,
+        listing_id=1,
+        target_price_paise=79900,
+        notify_on_restock=True,
+        is_active=True,
+        alert_rearmed=False,
+        last_alerted_price_paise=458,  # Previously alerted at 458 units
+    )
+    repo.subscriptions[10] = sub
+
+    alert_service = AlertService(subscription_repo=repo, user_repo=repo, bot=bot)
+    alert_service._cycle_counts[10] = 1
+
+    # Stock drops from 458 -> 410
+    decreased_quote = PriceQuote(
+        external_product_id="BTMCP11_30",
+        external_variant_id="BTMCP11_30",
+        price_paise=79900,
+        available=True,
+        inventory_quantity=410,
+        currency="INR",
+        verified_pincode="842002",
+        extraction_method="test",
+    )
+
+    sent = await alert_service.process_quote(listing, decreased_quote)
+    assert sent == 1
+    bot.send_message.assert_called_once()
+    args = bot.send_message.call_args[1]
+    assert args["chat_id"] == 55555
+    text = args["text"]
+    assert "AMUL STOCK DECREASING" in text
+    assert "458" in text and "410" in text
+    # Verify inline button links to exact product URL
+    kb = args["reply_markup"]
+    assert kb.inline_keyboard[0][0].url == "https://shop.amul.com/en/product/amul-high-protein-buttermilk-200-ml-or-pack-of-30"

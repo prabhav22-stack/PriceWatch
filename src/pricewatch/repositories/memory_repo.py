@@ -149,23 +149,25 @@ class MemoryRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         consecutive_failures: int = 0,
         error_code: Optional[str] = None,
         error_message: Optional[str] = None,
+        canonical_url: Optional[str] = None,
     ) -> None:
         if listing_id in self.listings:
             l = self.listings[listing_id]
-            self.listings[listing_id] = l.model_copy(
-                update={
-                    "last_price_paise": last_price_paise,
-                    "last_mrp_paise": last_mrp_paise,
-                    "last_available": last_available,
-                    "last_checked_at": datetime.now(timezone.utc),
-                    "next_check_at": next_check_at,
-                    "locked_until": None,
-                    "lock_owner": None,
-                    "consecutive_failures": consecutive_failures,
-                    "last_error_code": error_code,
-                    "last_error_message": error_message,
-                }
-            )
+            updates = {
+                "last_price_paise": last_price_paise,
+                "last_mrp_paise": last_mrp_paise,
+                "last_available": last_available,
+                "last_checked_at": datetime.now(timezone.utc),
+                "next_check_at": next_check_at,
+                "locked_until": None,
+                "lock_owner": None,
+                "consecutive_failures": consecutive_failures,
+                "last_error_code": error_code,
+                "last_error_message": error_message,
+            }
+            if canonical_url:
+                updates["canonical_url"] = canonical_url
+            self.listings[listing_id] = l.model_copy(update=updates)
 
     async def record_observation(self, observation: PriceObservation) -> None:
         obs_id = self._obs_seq

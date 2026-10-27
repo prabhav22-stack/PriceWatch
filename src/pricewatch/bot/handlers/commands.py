@@ -97,13 +97,22 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             provider = AmulProvider()
             quote = await provider.fetch_quote("", sku, sku, pincode=pincode)
 
+            prod_alias = sku
+            try:
+                cat_items = await provider.fetch_category_products(category_id="protein", pincode=pincode, limit=100)
+                m = next((it for it in cat_items if it.get("sku") == sku), None)
+                if m and m.get("alias"):
+                    prod_alias = m["alias"].replace(" ", "")
+            except Exception:
+                pass
+
             listing = CanonicalListing(
                 provider_code="amul",
                 provider_tier=1,
                 external_product_id=sku,
                 external_variant_id=sku,
                 pincode=pincode,
-                canonical_url=f"https://shop.amul.com/en/product/{sku}",
+                canonical_url=f"https://shop.amul.com/en/product/{prod_alias}",
                 product_title=quote.raw_variant_title or sku,
                 variant_title="Standard Pack",
                 currency="INR",
@@ -691,6 +700,51 @@ async def trackall_command_handler(update: Update, context: ContextTypes.DEFAULT
             "• Type <code>/trackall</code> again anytime to turn it off.\n"
             "• Configure notifications or auto-order with <code>/settings</code>."
         )
+
+
+async def repeat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /repeat <count> to configure dynamic decreasing stock updates."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+    args = context.args if isinstance(context.args, list) else []
+
+    if not args:
+        cur_str = "♾️ Until Stock Runs Out" if user.max_notify_count == 0 else f"{user.max_notify_count} dynamic alerts"
+        await update.effective_message.reply_html(
+            "🔁 <b>Repeated Stock Alerts Configuration</b>\n\n"
+            f"• Current setting: <b>{cur_str}</b>\n\n"
+            "<b>Usage:</b>\n"
+            "• <code>/repeat 1</code> to <code>/repeat 10</code> - Receive up to N dynamic updates as stock decreases.\n"
+            "• <code>/repeat 0</code> or <code>/repeat oos</code> - Continuous updates every time stock drops until sold out.\n\n"
+            "💡 You can also use the interactive buttons in <code>/settings</code>."
+        )
+        return
+
+    arg = args[0].strip().lower()
+    if arg in ("0", "oos", "continuous", "infinite", "unlimited"):
+        await tracker_service.update_user_settings(user.telegram_id, max_notify_count=0)
+        await update.effective_message.reply_html(
+            "✅ <b>Repeat alerts set to: ♾️ Until Stock Runs Out!</b>\n\n"
+            "You will now receive dynamic restock notifications whenever available warehouse units decrease "
+            "until the item completely runs out of stock."
+        )
+        return
+
+    try:
+        count = int(arg)
+        if count < 1 or count > 100:
+            await update.effective_message.reply_html("⚠️ Please enter a number between 1 and 10 (or 0 for continuous until OOS).")
+            return
+        await tracker_service.update_user_settings(user.telegram_id, max_notify_count=count)
+        await update.effective_message.reply_html(
+            f"✅ <b>Repeat alerts set to: {count} dynamic alerts per drop!</b>\n\n"
+            f"You will receive up to {count} updates whenever available warehouse stock decreases."
+        )
+    except ValueError:
+        await update.effective_message.reply_html("⚠️ Invalid number. Use e.g. <code>/repeat 3</code> or <code>/repeat oos</code>.")
 
 
 async def history_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

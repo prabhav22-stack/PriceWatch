@@ -40,12 +40,17 @@ def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
             InlineKeyboardButton(f"All Protein Alerts: {all_protein_toggle}", callback_data="cfg:toggle_all_protein"),
         ],
         [
-            InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
+            InlineKeyboardButton("1 Alert", callback_data="cfg:repeat:1"),
+            InlineKeyboardButton("2 Alerts", callback_data="cfg:repeat:2"),
+            InlineKeyboardButton("3 Alerts", callback_data="cfg:repeat:3"),
+            InlineKeyboardButton("5 Alerts", callback_data="cfg:repeat:5"),
         ],
         [
-            InlineKeyboardButton("Max: 1 Alert", callback_data="cfg:max:1"),
-            InlineKeyboardButton("Max: 3 Alerts", callback_data="cfg:max:3"),
-            InlineKeyboardButton("Max: 5 Alerts", callback_data="cfg:max:5"),
+            InlineKeyboardButton("10 Alerts", callback_data="cfg:repeat:10"),
+            InlineKeyboardButton("♾️ Until Stock Runs Out", callback_data="cfg:repeat:0"),
+        ],
+        [
+            InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
         ],
         [
             InlineKeyboardButton(f"Auto-Order: {ao_toggle}", callback_data="cfg:toggle_ao"),
@@ -152,12 +157,17 @@ def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
             InlineKeyboardButton(f"All Protein Alerts: {all_protein_toggle}", callback_data="cfg:toggle_all_protein"),
         ],
         [
-            InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
+            InlineKeyboardButton("1 Alert", callback_data="cfg:repeat:1"),
+            InlineKeyboardButton("2 Alerts", callback_data="cfg:repeat:2"),
+            InlineKeyboardButton("3 Alerts", callback_data="cfg:repeat:3"),
+            InlineKeyboardButton("5 Alerts", callback_data="cfg:repeat:5"),
         ],
         [
-            InlineKeyboardButton("Max: 1 Alert", callback_data="cfg:max:1"),
-            InlineKeyboardButton("Max: 3 Alerts", callback_data="cfg:max:3"),
-            InlineKeyboardButton("Max: 5 Alerts", callback_data="cfg:max:5"),
+            InlineKeyboardButton("10 Alerts", callback_data="cfg:repeat:10"),
+            InlineKeyboardButton("♾️ Until Stock Runs Out", callback_data="cfg:repeat:0"),
+        ],
+        [
+            InlineKeyboardButton(f"Switch Tracking to: {style_toggle}", callback_data="cfg:toggle_style"),
         ],
         [
             InlineKeyboardButton(f"Auto-Order: {ao_toggle}", callback_data="cfg:toggle_ao"),

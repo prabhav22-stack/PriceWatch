@@ -17,6 +17,7 @@ DEFAULT_BOT_COMMANDS: List[BotCommand] = [
     BotCommand("products", "Browse Amul products"),
     BotCommand("autoorder", "Toggle auto-ordering of products"),
     BotCommand("trackall", "Toggle restock alerts for all protein items"),
+    BotCommand("repeat", "Set repeat notification limit (1-10 or 0 for until OOS)"),
     BotCommand("settings", "View or change your settings"),
     BotCommand("tracked", "List all tracked products"),
     BotCommand("favourites", "List your favourite products"),

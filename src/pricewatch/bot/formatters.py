@@ -130,8 +130,13 @@ def format_subscription_list(items: List[Tuple[Subscription, CanonicalListing]])
 
         if listing.provider_code == "amul":
             stock_badge = "🟢 In Stock" if listing.last_available else "🔴 OOS"
+            title_link = (
+                f'<a href="{listing.canonical_url}"><b>{listing.product_title}</b></a>'
+                if listing.canonical_url and listing.canonical_url.startswith("http")
+                else f"<b>{listing.product_title}</b>"
+            )
             lines.append(
-                f"{i}. 🥛 <b>{listing.product_title}</b>{variant}\n"
+                f"{i}. 🥛 {title_link}{variant}\n"
                 f"   {stock_badge} | Stock Tracker (Pincode: {listing.pincode})\n"
                 f"   🆔 ID: <code>{listing.id}</code> | /untrack_{listing.id}"
             )
@@ -444,19 +449,20 @@ def format_settings_menu(user: User) -> str:
     all_protein_active = "ALL_PROTEIN" in (user.favourite_skus or [])
     all_protein_label = "Active 🔔 (All Items)" if all_protein_active else "Inactive 🔕 (Tracked/Favs Only)"
     phone_label = user.auto_order_phone or "Not configured"
+    repeat_label = "♾️ Until Stock Runs Out (Dynamic)" if user.max_notify_count == 0 else f"{user.max_notify_count} Dynamic Alerts"
 
     return (
         "⚙️ <b>Notification & Tracking Settings</b>\n\n"
         f"• <b>Default Pincode:</b> <code>{user.default_pincode or '842002'}</code>\n"
         f"• <b>All Protein Restock Alerts:</b> <b>{all_protein_label}</b>\n"
+        f"• <b>Repeat Stock Alerts:</b> <b>{repeat_label}</b>\n"
         f"• <b>Tracking Style:</b> <b>{style_label}</b>\n"
-        f"• <b>Max Alerts per Product:</b> <b>{user.max_notify_count}</b>\n"
         f"• <b>Auto-Order Checkout:</b> <b>{ao_label}</b> ({phone_label})\n\n"
         "<b>Explanation of Options:</b>\n"
+        "• <b>Repeat Stock Alerts</b>: Sends dynamic updates if stock decreases (1-10 alerts or continuous until OOS).\n"
         "• <b>All Protein Alerts</b>: Instant alert when ANY protein item restocks in your warehouse.\n"
         "• <b>Always</b>: Keeps tracking the product across restock cycles.\n"
-        "• <b>Once</b>: Alerts once when available, then automatically untracks to reduce spam.\n"
-        "• <b>Max Alerts</b>: Maximum restock alerts before pausing notifications."
+        "• <b>Once</b>: Alerts once when available, then automatically untracks."
     )
 
 

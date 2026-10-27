@@ -72,6 +72,7 @@ class BaseListingRepo(ABC):
         consecutive_failures: int = 0,
         error_code: Optional[str] = None,
         error_message: Optional[str] = None,
+        canonical_url: Optional[str] = None,
     ) -> None:
         """Update listing price, scheduling state, and release worker lock."""
 

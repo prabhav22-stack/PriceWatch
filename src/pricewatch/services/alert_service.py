@@ -36,6 +36,7 @@ class AlertService:
         self.repo = subscription_repo
         self.user_repo = user_repo
         self.bot = bot
+        self._cycle_counts: dict[int, int] = {}
 
     @staticmethod
     def evaluate_alert(
@@ -104,7 +105,7 @@ class AlertService:
             lines = [
                 "🥛 <b>AMUL PRODUCT BACK IN STOCK!</b>",
                 "",
-                f"📦 <b>Product:</b> {listing.product_title}",
+                f'📦 <b>Product:</b> <a href="{listing.canonical_url}">{listing.product_title}</a>',
                 f"🔢 <b>Available Stock:</b> {qty_str}",
                 f"💰 <b>Price:</b> <code>{price_str}</code>",
             ]
@@ -114,6 +115,37 @@ class AlertService:
                 "",
                 f'🔗 <a href="{listing.canonical_url}">Order on Amul Shop Now</a>',
             ])
+            return "\n".join(lines)
+
+        if alert_type == AlertType.AMUL_STOCK_DECREASE:
+            prev_qty = sub.last_alerted_price_paise or 0
+            curr_qty = quote.inventory_quantity or 0
+            diff = prev_qty - curr_qty if prev_qty > curr_qty else 0
+            lines = [
+                "📉 <b>AMUL STOCK DECREASING!</b>",
+                "",
+                f'📦 <b>Product:</b> <a href="{listing.canonical_url}">{listing.product_title}</a>',
+                f"🔢 <b>Stock Update:</b> <code>{prev_qty}</code> ➔ <b>{curr_qty} units remaining</b> (-{diff} sold)",
+                f"💰 <b>Price:</b> <code>{price_str}</code>",
+            ]
+            if listing.pincode:
+                lines.append(f"📍 <b>Delivery Pincode:</b> <code>{listing.pincode}</code>")
+            lines.extend([
+                "",
+                f'🔗 <a href="{listing.canonical_url}">Order on Amul Shop Now</a>',
+            ])
+            return "\n".join(lines)
+
+        if alert_type == AlertType.AMUL_OUT_OF_STOCK:
+            lines = [
+                "🔴 <b>AMUL PRODUCT OUT OF STOCK</b>",
+                "",
+                f'📦 <b>Product:</b> <a href="{listing.canonical_url}">{listing.product_title}</a>',
+                "All units have sold out in this warehouse drop.",
+                "The bot will automatically notify you on the next restock!",
+            ]
+            if listing.pincode:
+                lines.append(f"📍 <b>Delivery Pincode:</b> <code>{listing.pincode}</code>")
             return "\n".join(lines)
 
         if alert_type == AlertType.TARGET_REACHED:
@@ -174,13 +206,14 @@ class AlertService:
             if (
                 listing.provider_code == "amul"
                 and (not quote.available or (quote.inventory_quantity is not None and quote.inventory_quantity <= 0))
-                and not sub.alert_rearmed
             ):
-                await self.repo.update_alert_state(
-                    subscription_id=sub.id,
-                    last_alerted_price_paise=sub.last_alerted_price_paise,
-                    alert_rearmed=True,
-                )
+                if not sub.alert_rearmed:
+                    self._cycle_counts[sub.id] = 0
+                    await self.repo.update_alert_state(
+                        subscription_id=sub.id,
+                        last_alerted_price_paise=None,
+                        alert_rearmed=True,
+                    )
                 continue
 
             rearm_threshold = int(sub.target_price_paise * (100 + settings.HYSTERESIS_REARM_PCT) / 100)
@@ -192,15 +225,32 @@ class AlertService:
                 )
                 continue
 
-            alert_type = self.evaluate_alert(sub, quote, settings.HYSTERESIS_REARM_PCT, listing=listing)
+            alert_type = None
+            if listing.provider_code == "amul":
+                if quote.available and (quote.inventory_quantity is None or quote.inventory_quantity > 0):
+                    if sub.alert_rearmed:
+                        alert_type = AlertType.AMUL_RESTOCK
+                        self._cycle_counts[sub.id] = 1
+                    else:
+                        prev_qty = sub.last_alerted_price_paise
+                        curr_qty = quote.inventory_quantity
+                        if prev_qty is not None and curr_qty is not None and curr_qty < prev_qty:
+                            user = await self.user_repo.get_or_create_user(sub.telegram_id) if self.user_repo else None
+                            max_alerts = user.max_notify_count if user is not None else 5
+                            cycle_count = self._cycle_counts.get(sub.id, 1)
+                            # max_alerts == 0 means "until stock runs out"
+                            if max_alerts == 0 or cycle_count < max_alerts:
+                                alert_type = AlertType.AMUL_STOCK_DECREASE
+                                self._cycle_counts[sub.id] = cycle_count + 1
+            else:
+                alert_type = self.evaluate_alert(sub, quote, settings.HYSTERESIS_REARM_PCT, listing=listing)
+
             if not alert_type:
                 continue
 
             # 2. Phase 1: Outbox row with deterministic idempotency key
-            if alert_type == AlertType.AMUL_RESTOCK:
-                # 2-minute deduplication window; allows fresh restock alerts if item goes OOS and returns
-                bucket = int(datetime.now(timezone.utc).timestamp() // 120)
-                idempotency_key = f"{sub.id}:amul_restock:{quote.inventory_quantity}:{bucket}"
+            if alert_type in (AlertType.AMUL_RESTOCK, AlertType.AMUL_STOCK_DECREASE):
+                idempotency_key = f"{sub.id}:{alert_type.value}:{quote.inventory_quantity}"
             else:
                 today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 price_for_key = quote.price_paise or quote.inventory_quantity or 0
@@ -223,17 +273,25 @@ class AlertService:
             # 3. Phase 2: Telegram Dispatch
             if self.bot:
                 text = self.format_alert_message(alert_type, quote, listing, sub)
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                reply_markup = None
+                if listing.canonical_url and listing.canonical_url.startswith("http"):
+                    reply_markup = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🛍️ Order on Amul Now", url=listing.canonical_url)]
+                    ])
                 try:
                     msg = await self.bot.send_message(
                         chat_id=sub.telegram_id,
                         text=text,
                         parse_mode="HTML",
+                        reply_markup=reply_markup,
                         disable_web_page_preview=False,
                     )
-                    # Update subscription alert state
+                    # Update subscription alert state: for Amul, store inventory quantity to track decreases
+                    alerted_val = quote.inventory_quantity if listing.provider_code == "amul" else quote.price_paise
                     await self.repo.update_alert_state(
                         subscription_id=sub.id,
-                        last_alerted_price_paise=quote.price_paise,
+                        last_alerted_price_paise=alerted_val,
                         alert_rearmed=False,
                     )
                     alerts_sent += 1

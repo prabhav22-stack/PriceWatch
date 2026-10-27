@@ -134,6 +134,7 @@ async def run_amul_poller(
                             last_available=is_avail,
                             next_check_at=datetime.now(timezone.utc),
                             consecutive_failures=0,
+                            canonical_url=url,
                         )
 
                         # Update stock history transition tracking

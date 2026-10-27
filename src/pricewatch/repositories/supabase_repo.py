@@ -151,6 +151,7 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         consecutive_failures: int = 0,
         error_code: Optional[str] = None,
         error_message: Optional[str] = None,
+        canonical_url: Optional[str] = None,
     ) -> None:
         payload = {
             "last_price_paise": last_price_paise,
@@ -164,6 +165,8 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             "last_error_code": error_code,
             "last_error_message": error_message,
         }
+        if canonical_url:
+            payload["canonical_url"] = canonical_url
         self.client.table("canonical_listings").update(payload).eq("id", listing_id).execute()
 
     async def record_observation(self, observation: PriceObservation) -> None:

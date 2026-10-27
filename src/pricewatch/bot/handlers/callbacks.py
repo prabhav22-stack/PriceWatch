@@ -268,7 +268,7 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             if cfg_action == "toggle_style":
                 new_style = "once" if user.tracking_style == "always" else "always"
                 user = await tracker_service.update_user_settings(user_id, tracking_style=new_style)
-            elif cfg_action.startswith("max:"):
+            elif cfg_action.startswith("max:") or cfg_action.startswith("repeat:"):
                 new_max = int(cfg_action.split(":")[1])
                 user = await tracker_service.update_user_settings(user_id, max_notify_count=new_max)
             elif cfg_action == "toggle_ao":
