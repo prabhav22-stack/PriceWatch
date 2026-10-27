@@ -122,3 +122,64 @@ async def test_auto_order_service_otp_validation():
     overview_text = format_auto_order_overview(user)
     assert "Amul Headless Auto-Order Engine" in overview_text
     assert "BTMCP11_30" in overview_text
+
+
+@pytest.mark.asyncio
+async def test_bot_menu_commands_configuration():
+    from pricewatch.bot.commands_menu import DEFAULT_BOT_COMMANDS, configure_bot_menu_button
+    mock_bot = MagicMock()
+    mock_bot.set_my_commands = AsyncMock()
+    mock_bot.set_chat_menu_button = AsyncMock()
+
+    await configure_bot_menu_button(mock_bot)
+
+    mock_bot.set_my_commands.assert_called_once_with(DEFAULT_BOT_COMMANDS)
+    mock_bot.set_chat_menu_button.assert_called_once()
+    
+    # Verify core commands from user's screenshot exist
+    cmd_names = [cmd.command for cmd in DEFAULT_BOT_COMMANDS]
+    assert "start" in cmd_names
+    assert "setpincode" in cmd_names
+    assert "pincode" in cmd_names
+    assert "products" in cmd_names
+    assert "autoorder" in cmd_names
+    assert "settings" in cmd_names
+    assert "tracked" in cmd_names
+    assert "favourites" in cmd_names
+    assert "support" in cmd_names
+    assert "map" in cmd_names
+
+
+@pytest.mark.asyncio
+async def test_pincode_and_setpincode_handlers(memory_tracker_service):
+    from pricewatch.bot.handlers.commands import pincode_handler, setpincode_handler
+    from telegram import Update, User as TgUser, Chat, Message
+
+    update = MagicMock(spec=Update)
+    user = TgUser(id=777, first_name="Charlie", is_bot=False)
+    chat = Chat(id=777, type="private")
+    message = MagicMock(spec=Message)
+    message.reply_html = AsyncMock()
+    update.effective_user = user
+    update.effective_chat = chat
+    update.effective_message = message
+
+    context = MagicMock()
+    context.bot_data = {"tracker_service": memory_tracker_service}
+    context.args = []
+
+    # 1. /pincode without args shows current pincode
+    with patch("pricewatch.providers.amul.AmulProvider.resolve_substore_for_pincode", new=AsyncMock(return_value="bihar")):
+        await pincode_handler(update, context)
+        reply = message.reply_html.call_args[0][0]
+        assert "Your current pincode is:" in reply
+        assert "/setpincode" in reply
+
+    # 2. /setpincode updates pincode
+    message.reply_html.reset_mock()
+    context.args = ["110001"]
+    with patch("pricewatch.providers.amul.AmulProvider.resolve_substore_for_pincode", new=AsyncMock(return_value="delhi")):
+        await setpincode_handler(update, context)
+        reply2 = message.reply_html.call_args[0][0]
+        assert "Default delivery pincode updated to:" in reply2
+        assert "110001" in reply2

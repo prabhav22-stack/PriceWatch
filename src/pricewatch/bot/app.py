@@ -11,6 +11,7 @@ from telegram.ext import (
     filters,
 )
 
+from pricewatch.bot.commands_menu import configure_bot_menu_button
 from pricewatch.bot.handlers.callbacks import callback_query_dispatcher
 from pricewatch.bot.handlers.commands import (
     amul_command_handler,
@@ -20,13 +21,16 @@ from pricewatch.bot.handlers.commands import (
     help_handler,
     history_command_handler,
     list_handler,
+    map_handler,
     pincode_handler,
     plain_text_handler,
     productcount_command_handler,
     search_command_handler,
+    setpincode_handler,
     settings_command_handler,
     start_handler,
     status_handler,
+    support_handler,
     track_handler,
     untrack_handler,
 )
@@ -46,6 +50,8 @@ def create_telegram_app(
     builder = ApplicationBuilder().token(token)
     # Enable asynchronous rate limiting to respect Telegram's 30 msgs/sec global limit
     builder.rate_limiter(AIORateLimiter())
+    # Configure native menu button and bot commands on initialization
+    builder.post_init(lambda application: configure_bot_menu_button(application.bot))
 
     app = builder.build()
 
@@ -57,7 +63,9 @@ def create_telegram_app(
     app.add_handler(CommandHandler("help", help_handler))
     app.add_handler(CommandHandler("track", track_handler))
     app.add_handler(CommandHandler("list", list_handler))
+    app.add_handler(CommandHandler("tracked", list_handler))
     app.add_handler(CommandHandler("untrack", untrack_handler))
+    app.add_handler(CommandHandler("setpincode", setpincode_handler))
     app.add_handler(CommandHandler("pincode", pincode_handler))
     app.add_handler(CommandHandler("status", status_handler))
     app.add_handler(CommandHandler("amul", amul_command_handler))
@@ -70,6 +78,8 @@ def create_telegram_app(
     app.add_handler(CommandHandler("count", productcount_command_handler))
     app.add_handler(CommandHandler("settings", settings_command_handler))
     app.add_handler(CommandHandler("autoorder", autoorder_command_handler))
+    app.add_handler(CommandHandler("support", support_handler))
+    app.add_handler(CommandHandler("map", map_handler))
     app.add_handler(CommandHandler("history", history_command_handler))
 
     # Catch /untrack_123 and /history_123 shorthand commands

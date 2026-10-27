@@ -275,24 +275,87 @@ async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def pincode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /pincode <pincode>."""
+    """Handle /pincode command (views current pincode, or updates if 6-digit argument provided)."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+    args = context.args if isinstance(context.args, list) else []
+
+    if args and _PINCODE_REGEX.match(args[0].strip()):
+        new_pin = args[0].strip()
+        await tracker_service.set_user_pincode(update.effective_user.id, new_pin)
+        amul_provider = AmulProvider()
+        substore = await amul_provider.resolve_substore_for_pincode(new_pin)
+        await update.effective_message.reply_html(
+            f"📍 <b>Default delivery pincode updated to:</b> <code>{new_pin}</code> (Warehouse: <i>{substore}</i>)"
+        )
+        return
+
+    curr_pin = user.default_pincode or "842002"
+    amul_provider = AmulProvider()
+    substore = await amul_provider.resolve_substore_for_pincode(curr_pin)
+    await update.effective_message.reply_html(
+        f"📍 Your current pincode is: <b>{curr_pin} ({substore})</b>\n\n"
+        "To change your pincode, use the command <b>/setpincode</b> followed by your new pincode.\n"
+        "Example: <code>/setpincode 842002</code>"
+    )
+
+
+async def setpincode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /setpincode <6-digit pincode>."""
     if not update.effective_user or not update.effective_message:
         return
 
     args = context.args if isinstance(context.args, list) else []
     if not args or not _PINCODE_REGEX.match(args[0].strip()):
         await update.effective_message.reply_html(
-            "⚠️ <b>Usage:</b> <code>/pincode &lt;6-digit pincode&gt;</code>\n"
-            "<b>Example:</b> <code>/pincode 842002</code>"
+            "⚠️ <b>Usage:</b> <code>/setpincode &lt;6-digit pincode&gt;</code>\n"
+            "<b>Example:</b> <code>/setpincode 842002</code>"
         )
         return
 
-    pincode = args[0].strip()
+    new_pin = args[0].strip()
     tracker_service: TrackerService = context.bot_data["tracker_service"]
-    await tracker_service.set_user_pincode(update.effective_user.id, pincode)
+    await tracker_service.set_user_pincode(update.effective_user.id, new_pin)
+    amul_provider = AmulProvider()
+    substore = await amul_provider.resolve_substore_for_pincode(new_pin)
     await update.effective_message.reply_html(
-        f"📍 <b>Default delivery pincode updated to:</b> <code>{pincode}</code>"
+        f"📍 <b>Default delivery pincode updated to:</b> <code>{new_pin}</code> (Warehouse: <i>{substore}</i>)"
     )
+
+
+async def support_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /support command."""
+    if not update.effective_message:
+        return
+    text = (
+        "🤝 <b>PriceWatch Support & Community</b>\n\n"
+        "PriceWatch is open-source and built for real-time price & stock tracking.\n\n"
+        "• <b>GitHub:</b> <a href=\"https://github.com/prabhav22-stack/PriceWatch\">prabhav22-stack/PriceWatch</a>\n"
+        "• <b>Commands Help:</b> Type <code>/help</code> for full usage guide\n"
+        "• <b>Status & Uptime:</b> Type <code>/status</code> for health metrics\n\n"
+        "Have feedback, feature requests, or encountered an issue? Let us know!"
+    )
+    await update.effective_message.reply_html(text, disable_web_page_preview=True)
+
+
+async def map_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /map command."""
+    if not update.effective_message:
+        return
+    text = (
+        "🗺️ <b>Amul Regional Warehouse & Delivery Hubs</b>\n\n"
+        "Amul Shop routes orders based on regional cold storage hubs:\n"
+        "• <b>Bihar Hub (bihar):</b> Serving Pincodes <code>842xxx</code>, <code>800xxx</code> (Patna/Muzaffarpur)\n"
+        "• <b>Delhi NCR (delhi):</b> Serving Pincodes <code>110xxx</code>, <code>201xxx</code>, <code>122xxx</code>\n"
+        "• <b>Mumbai Hub (mumbai):</b> Serving Pincodes <code>400xxx</code>\n"
+        "• <b>Gujarat Hub (gujarat):</b> Serving Pincodes <code>380xxx</code>, <code>388xxx</code> (Anand/Ahmedabad)\n"
+        "• <b>Bangalore Hub (bangalore):</b> Serving Pincodes <code>560xxx</code>\n\n"
+        "Use <code>/setpincode &lt;pincode&gt;</code> to automatically connect to your regional warehouse."
+    )
+    await update.effective_message.reply_html(text)
 
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

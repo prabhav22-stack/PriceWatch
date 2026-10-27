@@ -18,6 +18,7 @@ import tornado.web
 from telegram import Update
 
 from pricewatch.bot.app import create_telegram_app
+from pricewatch.bot.commands_menu import configure_bot_menu_button
 from pricewatch.config import settings
 from pricewatch.logging_setup import get_logger, setup_logging
 from pricewatch.repositories.memory_repo import MemoryRepository
@@ -88,6 +89,7 @@ async def run_server_async(port: int, webhook_url: str) -> None:
     # Initialize and start PTB Application
     await ptb_app.initialize()
     await ptb_app.start()
+    await configure_bot_menu_button(ptb_app.bot)
 
     # Register webhook with Telegram
     logger.info("Setting Telegram webhook...", webhook_url=webhook_url)
