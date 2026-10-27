@@ -147,26 +147,7 @@ async def run_amul_poller(
                         except Exception as hist_err:
                             logger.warning("Failed updating stock tracker history in batch poller", error=str(hist_err))
 
-                        # Auto-subscribe users who marked this item as favourite or enabled ALL_PROTEIN
-                        current_subs = await repo.get_active_subscriptions_for_listing(listing.id)
-                        subscribed_tg_ids = {s.telegram_id for s in current_subs}
-
-                        for u in relevant_users:
-                            favs = u.favourite_skus or []
-                            should_track = (sku in favs) or ("ALL_PROTEIN" in favs)
-                            if should_track and u.telegram_id not in subscribed_tg_ids:
-                                await repo.create_or_update_subscription(
-                                    Subscription(
-                                        telegram_id=u.telegram_id,
-                                        listing_id=listing.id,
-                                        target_price_paise=price_paise or 0,
-                                        notify_on_restock=True,
-                                        is_active=True,
-                                        alert_rearmed=True,
-                                    )
-                                )
-
-                        # Dispatch alert if restocked
+                        # Evaluate active user subscriptions for this listing
                         await alert_service.process_quote(listing, quote)
 
                     # Also check any standalone monitored Amul listings outside the category

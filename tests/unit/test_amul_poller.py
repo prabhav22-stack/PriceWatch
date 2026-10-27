@@ -102,18 +102,41 @@ async def test_run_amul_poller_detects_restock_and_alerts():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_run_amul_poller_auto_subscribes_favourite_and_all_protein():
+async def test_run_amul_poller_batch_updates_subscribed_items():
     repo = MemoryRepository()
     bot = MagicMock()
     bot.send_message = AsyncMock()
 
-    # User with favourite and ALL_PROTEIN enabled
+    # Explicit user subscription
     user = User(
         telegram_id=12345,
         default_pincode="842002",
-        favourite_skus=["ALL_PROTEIN"],
     )
     repo.users[12345] = user
+
+    listing = CanonicalListing(
+        id=1,
+        provider_code="amul",
+        external_product_id="BTMCP11_30",
+        external_variant_id="BTMCP11_30",
+        pincode="842002",
+        canonical_url="https://shop.amul.com/en/product/amul-high-protein-buttermilk-200-ml-or-pack-of-30",
+        product_title="Amul High Protein Buttermilk, 200 mL | Pack of 30",
+        last_price_paise=79900,
+        last_available=False,
+    )
+    repo.listings[1] = listing
+
+    sub = Subscription(
+        id=1,
+        telegram_id=12345,
+        listing_id=1,
+        target_price_paise=79900,
+        notify_on_restock=True,
+        is_active=True,
+        alert_rearmed=True,
+    )
+    repo.subscriptions[1] = sub
 
     # Mock Amul API
     respx.get(url__startswith=f"{SHOP_URL}/entity/pincode").mock(
