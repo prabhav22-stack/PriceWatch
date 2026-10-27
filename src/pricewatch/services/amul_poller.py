@@ -83,8 +83,12 @@ async def run_amul_poller(
 
                         is_avail = bool(item.get("available", False))
                         eff_qty = item.get("inventory_quantity")
-                        price_paise = item.get("price_paise") or 0
+                        price_paise = item.get("price_paise")
+                        if price_paise is not None and price_paise <= 0:
+                            price_paise = None
                         mrp_paise = item.get("mrp_paise")
+                        if mrp_paise is not None and mrp_paise <= 0:
+                            mrp_paise = None
                         name = item.get("name") or sku
                         alias = item.get("alias") or sku
                         clean_alias = alias.replace(" ", "") if alias else sku
