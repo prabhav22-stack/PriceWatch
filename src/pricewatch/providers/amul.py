@@ -238,7 +238,8 @@ class AmulProvider(BaseProvider):
                     image_url = f"https://shop.amul.com{images[0]}" if not images[0].startswith("http") else images[0]
 
                 alias = item.get("alias", "")
-                prod_url = f"{SHOP_URL}/en/browse/product/{alias}" if alias else SHOP_URL
+                clean_alias = alias.replace(" ", "") if alias else (item.get("sku") or "")
+                prod_url = f"{SHOP_URL}/en/product/{clean_alias}" if clean_alias else SHOP_URL
 
                 results.append({
                     "sku": item.get("sku"),
@@ -297,7 +298,8 @@ class AmulProvider(BaseProvider):
                 price_paise = parse_inr_to_paise(str(it.get("price", "0")))
                 available, eff_qty = self.calculate_effective_inventory(it)
 
-            canonical_url = f"{SHOP_URL}/en/browse/product/{alias}"
+            clean_alias = alias.replace(" ", "") if alias else sku
+            canonical_url = f"{SHOP_URL}/en/product/{clean_alias}" if clean_alias else SHOP_URL
             variant = VariantOption(
                 external_variant_id=sku,
                 variant_title="Standard Pack",

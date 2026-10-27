@@ -59,7 +59,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 external_product_id=sku,
                 external_variant_id=sku,
                 pincode=pincode,
-                canonical_url=f"https://shop.amul.com/en/browse/product/{sku}",
+                canonical_url=f"https://shop.amul.com/en/product/{sku}",
                 product_title=quote.raw_variant_title or sku,
                 variant_title="Standard Pack",
                 currency="INR",

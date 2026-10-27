@@ -21,6 +21,7 @@ from pricewatch.bot.keyboards import (
 from pricewatch.domain.models import CanonicalListing, Subscription
 from pricewatch.logging_setup import get_logger
 from pricewatch.providers.amul import AMUL_CATEGORIES, AmulProvider
+from pricewatch.services.amul_stock_tracker import AmulStockTracker
 from pricewatch.services.chart_service import ChartService
 from pricewatch.services.tracker_service import TrackerService
 
@@ -146,6 +147,16 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             # Fetch ALL category products (limit=100) so none are ever missing
             products = await amul_provider.fetch_category_products(cat_id, pincode=pincode, limit=100)
 
+            # Record live stock observations and retrieve history
+            stock_tracker = AmulStockTracker.get_instance()
+            await stock_tracker.load_history_for_substore(substore)
+            stock_tracker.record_batch_observations(products, substore=substore)
+            stock_histories = {
+                p.get("sku"): stock_tracker.get_history(p.get("sku", ""), substore)
+                for p in products
+                if p.get("sku")
+            }
+
             user_subs = await tracker_service.list_user_subscriptions(user_id)
             tracked_skus = {s[1].external_variant_id for s in user_subs if s[1].provider_code == "amul"}
             bot_username = context.bot.username or "wheypricewatch_bot"
@@ -158,6 +169,7 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 products=products,
                 tracked_skus=tracked_skus,
                 bot_username=bot_username,
+                stock_histories=stock_histories,
             )
 
             # Edit the original message with the first block
@@ -192,7 +204,7 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 external_product_id=sku,
                 external_variant_id=sku,
                 pincode=pincode,
-                canonical_url=f"https://shop.amul.com/en/browse/product/{sku}",
+                canonical_url=f"https://shop.amul.com/en/product/{sku}",
                 product_title=quote.raw_variant_title or sku,
                 variant_title="Standard Pack",
                 currency="INR",

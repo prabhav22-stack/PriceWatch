@@ -13,6 +13,7 @@ from pricewatch.logging_setup import get_logger
 from pricewatch.providers.amul import AmulProvider
 from pricewatch.repositories.base import BaseListingRepo, BaseSubscriptionRepo
 from pricewatch.services.alert_service import AlertService
+from pricewatch.services.amul_stock_tracker import AmulStockTracker
 
 logger = get_logger("amul_poller")
 
@@ -57,6 +58,17 @@ async def run_amul_poller(
                         next_check_at=datetime.now(timezone.utc),
                         consecutive_failures=0,
                     )
+
+                    # Update stock history transition tracking
+                    try:
+                        substore = await provider.resolve_substore_for_pincode(pincode)
+                        AmulStockTracker.get_instance().record_observation(
+                            sku=sku,
+                            substore=substore,
+                            is_available=quote.available,
+                        )
+                    except Exception as hist_err:
+                        logger.warning("Failed updating stock tracker history in poller", error=str(hist_err))
 
                     # Evaluate alerts & dispatch Telegram message if restocked
                     await alert_service.process_quote(listing, quote)
