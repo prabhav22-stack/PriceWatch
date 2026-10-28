@@ -140,7 +140,11 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
 
             text = format_amul_category_menu(pincode=pincode, substore=substore)
             kb = build_amul_category_keyboard()
-            await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    raise
             return
 
         # 6. Amul Category Product View: amul_cat:<cat_id>
@@ -151,21 +155,30 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 {"label": cat_id.title(), "emoji": "💪"},
             )
             try:
-                await query.answer(f"Fetching {cat_info['label']}...")
+                await query.answer(f"{cat_info['label']} products")
             except Exception:
                 pass
 
             user = await tracker_service.get_or_register_user(telegram_id=user_id)
             pincode = user.default_pincode or "842002"
 
-            # Instant visual indicator for snappy UX
+            # Safely delete the category menu message matching upstream amul-notify
             try:
-                await query.edit_message_text(
-                    f"⏳ <i>Loading live stock for <b>{cat_info['label']}</b> (PIN: {pincode})...</i>",
-                    parse_mode="HTML",
-                )
+                await query.message.delete()
             except Exception:
                 pass
+
+            wait_msg = None
+            cache_key = (cat_id, pincode)
+            if cache_key not in AmulProvider._cls_category_cache:
+                try:
+                    wait_msg = await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=f"⏳ Fetching <b>{cat_info['label']}</b> from Amul... Please wait...",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
 
             amul_provider = AmulProvider()
             substore = await amul_provider.resolve_substore_for_pincode(pincode)
@@ -184,6 +197,7 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
 
             user_subs = await tracker_service.list_user_subscriptions(user_id)
             tracked_skus = {s[1].external_variant_id for s in user_subs if s[1].provider_code == "amul"}
+            favourite_skus = set(user.favourite_skus or [])
             bot_username = context.bot.username or "wheypricewatch_bot"
 
             messages = format_amul_category_messages(
@@ -195,17 +209,17 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 tracked_skus=tracked_skus,
                 bot_username=bot_username,
                 stock_histories=stock_histories,
+                favourite_skus=favourite_skus,
             )
 
-            # Edit the original message with the first block
-            await query.edit_message_text(
-                messages[0],
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
+            if wait_msg:
+                try:
+                    await wait_msg.delete()
+                except Exception:
+                    pass
 
-            # Deliver subsequent chunked messages so all 24+ items are cleanly shown
-            for chunk in messages[1:]:
+            # Deliver all chunked messages cleanly so all 24+ items are shown without edit collisions
+            for chunk in messages:
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=chunk,
@@ -418,5 +432,11 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             await query.edit_message_text("⚠️ Selection expired. Please paste the product link again.")
 
     except Exception as exc:
-        logger.exception("Failed to process callback query", data=data, error=str(exc))
-        await query.edit_message_text(f"❌ Error: {exc}")
+        err_msg = str(exc)
+        if "Message is not modified" in err_msg or "Query is too old" in err_msg:
+            return
+        logger.exception("Failed to process callback query", data=data, error=err_msg)
+        try:
+            await query.edit_message_text(f"❌ Error: {exc}")
+        except Exception:
+            pass
