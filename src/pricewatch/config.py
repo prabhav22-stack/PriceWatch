@@ -70,7 +70,7 @@ def get_provider_check_interval(provider_code: str) -> timedelta:
     code = (provider_code or "").lower()
     if code == "amul":
         return timedelta(seconds=settings.AMUL_CHECK_INTERVAL_SECONDS)
-    if code.startswith("shopify"):
+    if code == "nutrabay" or code.startswith("shopify"):
         return timedelta(minutes=settings.SHOPIFY_CHECK_INTERVAL_MINUTES)
     if code in ("amazon", "amazon_fresh", "flipkart"):
         return timedelta(minutes=settings.MARKETPLACE_CHECK_INTERVAL_MINUTES)

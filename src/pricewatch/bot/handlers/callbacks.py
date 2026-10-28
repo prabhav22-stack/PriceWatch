@@ -15,6 +15,7 @@ from pricewatch.bot.formatters import (
     format_stepwise_product_preview,
     format_subscription_list,
     format_tracking_confirmation,
+    format_tracking_mode_confirmation,
 )
 from pricewatch.bot.keyboards import (
     build_action_nav_keyboard,
@@ -26,6 +27,7 @@ from pricewatch.bot.keyboards import (
     build_search_suggestions_keyboard,
     build_settings_keyboard,
     build_target_price_keyboard,
+    build_tracking_mode_keyboard,
 )
 from pricewatch.domain.models import CanonicalListing, Subscription
 from pricewatch.logging_setup import get_logger
@@ -49,6 +51,71 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
     user_id = query.from_user.id
 
     try:
+        # Cancel tracking prompt: trk:cancel
+        if data == "trk:cancel":
+            context.user_data.pop("awaiting_track_url", None)
+            context.user_data.pop("awaiting_custom_price", None)
+            context.user_data.pop("pending_track_variants", None)
+            context.user_data.pop("pending_track", None)
+            await query.edit_message_text("❌ Product tracking cancelled.")
+            return
+
+        # Tracking mode selection: trk_mode:<listing_id>:<mode>
+        if data.startswith("trk_mode:"):
+            parts = data.split(":")
+            listing_id = int(parts[1])
+            mode = parts[2]
+
+            listing = await tracker_service.get_listing(listing_id)
+            if not listing:
+                await query.edit_message_text("❌ Product listing not found.")
+                return
+
+            if mode == "target":
+                target_kb = build_target_price_keyboard(
+                    listing_id=listing_id,
+                    current_price_paise=listing.last_price_paise or 0,
+                )
+                await query.edit_message_text(
+                    "🎯 <b>What target price would you like to set for alert?</b>\n\n"
+                    "<i>Select a quick discount option below or choose Custom Price:</i>",
+                    reply_markup=target_kb,
+                    parse_mode="HTML",
+                )
+                return
+
+            if mode == "back":
+                preview_text = format_stepwise_product_preview(listing)
+                mode_kb = build_tracking_mode_keyboard(
+                    listing_id=listing.id,
+                    current_price_paise=listing.last_price_paise or 0,
+                    is_in_stock=listing.last_available if listing.last_available is not None else True,
+                )
+                await query.edit_message_text(preview_text, reply_markup=mode_kb, parse_mode="HTML")
+                return
+
+            # Modes: "stock", "discount", "both"
+            target_paise = listing.last_price_paise or 1
+            notify_restock = mode in ("stock", "both")
+            is_in_stock = bool(listing.last_available)
+            alert_rearmed = not is_in_stock if mode == "stock" else True
+
+            sub = Subscription(
+                telegram_id=user_id,
+                listing_id=listing_id,
+                target_price_paise=target_paise,
+                notify_on_restock=notify_restock,
+                is_active=True,
+                alert_rearmed=alert_rearmed,
+                last_alerted_price_paise=listing.last_price_paise if is_in_stock else None,
+            )
+            saved_sub = await tracker_service.sub_repo.create_or_update_subscription(sub)
+            context.user_data.pop("awaiting_custom_price", None)
+            conf_text = format_tracking_mode_confirmation(listing, saved_sub, mode)
+            kb = build_listing_card_keyboard(listing_id)
+            await query.edit_message_text(conf_text, reply_markup=kb, parse_mode="HTML")
+            return
+
         # 1. Stepwise target price selection: tgt:<listing_id>:<target_paise>
         if data.startswith("tgt:"):
             parts = data.split(":")

@@ -68,6 +68,10 @@ class AlertService:
         if not quote.available or quote.price_paise is None:
             return None
 
+        # Scenario 0: Back in Stock / Restock Alert (Non-Amul)
+        if sub.notify_on_restock and sub.alert_rearmed and listing and listing.last_available is False:
+            return AlertType.RESTOCK
+
         # Scenario 5: Check if price rose enough to re-arm (+3% above target)
         rearm_threshold = int(sub.target_price_paise * (100 + hysteresis_rearm_pct) / 100)
         if quote.price_paise >= rearm_threshold and not sub.alert_rearmed:
@@ -193,7 +197,9 @@ class AlertService:
                 lines.append(f"📍 <b>Delivery Pincode:</b> <code>{listing.pincode}</code>")
             return "\n".join(lines)
 
-        if alert_type == AlertType.TARGET_REACHED:
+        if alert_type == AlertType.RESTOCK:
+            header = "🎉 <b>PRODUCT BACK IN STOCK!</b>"
+        elif alert_type == AlertType.TARGET_REACHED:
             header = "🎯 <b>PRICE TARGET REACHED!</b>"
         elif alert_type == AlertType.FURTHER_DROP:
             header = "⚡ <b>PRICE DROPPED EVEN FURTHER!</b>"
@@ -214,6 +220,9 @@ class AlertService:
         ]
         if listing.variant_title and listing.variant_title != "Default":
             lines.append(f"🏷️ <b>Variant:</b> {listing.variant_title}")
+
+        if alert_type == AlertType.RESTOCK:
+            lines.append("🟢 <b>Status:</b> Back in stock and ready to order!")
 
         if alert_type == AlertType.SIGNIFICANT_DROP and listing.last_price_paise and quote.price_paise and listing.last_price_paise > quote.price_paise:
             drop_pct = int(round((listing.last_price_paise - quote.price_paise) * 100 / listing.last_price_paise))

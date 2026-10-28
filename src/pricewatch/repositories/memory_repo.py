@@ -225,6 +225,7 @@ class MemoryRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
                 updated = existing.model_copy(
                     update={
                         "target_price_paise": sub.target_price_paise,
+                        "notify_on_restock": sub.notify_on_restock,
                         "is_active": True,
                         "alert_rearmed": True,
                     }

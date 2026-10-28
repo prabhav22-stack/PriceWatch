@@ -243,6 +243,7 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             "telegram_id": sub.telegram_id,
             "listing_id": sub.listing_id,
             "target_price_paise": sub.target_price_paise,
+            "notify_on_restock": sub.notify_on_restock,
             "is_active": True,
             "alert_rearmed": True,
             "updated_at": datetime.now(timezone.utc).isoformat(),

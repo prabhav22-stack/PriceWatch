@@ -83,6 +83,43 @@ def build_untrack_keyboard(listing_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+def build_tracking_mode_keyboard(
+    listing_id: int,
+    current_price_paise: int,
+    is_in_stock: bool = True,
+) -> InlineKeyboardMarkup:
+    """Intuitive tracking options: Discount only, Restock only, Both, or Target Price."""
+    rows = []
+    if not is_in_stock:
+        rows.append([
+            InlineKeyboardButton("📦 Track When Back in Stock", callback_data=f"trk_mode:{listing_id}:stock"),
+        ])
+        rows.append([
+            InlineKeyboardButton("🔥 Track Significant Discounts", callback_data=f"trk_mode:{listing_id}:discount"),
+        ])
+        rows.append([
+            InlineKeyboardButton("⚡ Track Both (Stock + Discounts)", callback_data=f"trk_mode:{listing_id}:both"),
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton("🔥 Track Significant Discounts", callback_data=f"trk_mode:{listing_id}:discount"),
+        ])
+        rows.append([
+            InlineKeyboardButton("📦 Track Stock / Restocks", callback_data=f"trk_mode:{listing_id}:stock"),
+        ])
+        rows.append([
+            InlineKeyboardButton("⚡ Track Both (Drops + Restock)", callback_data=f"trk_mode:{listing_id}:both"),
+        ])
+
+    rows.append([
+        InlineKeyboardButton("🎯 Set Custom Target Price", callback_data=f"trk_mode:{listing_id}:target"),
+    ])
+    rows.append([
+        InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
 def build_target_price_keyboard(listing_id: int, current_price_paise: int) -> InlineKeyboardMarkup:
     """Dynamic quick-select price discount pills for stepwise onboarding."""
     c_p = current_price_paise
@@ -105,6 +142,7 @@ def build_target_price_keyboard(listing_id: int, current_price_paise: int) -> In
             InlineKeyboardButton("✏️ Custom Price", callback_data=f"tgt_custom:{listing_id}"),
         ],
         [
+            InlineKeyboardButton("⬅️ Back to Tracking Options", callback_data=f"trk_mode:{listing_id}:back"),
             InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
         ],
     ])

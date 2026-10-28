@@ -29,6 +29,7 @@ from pricewatch.bot.keyboards import (
     build_search_suggestions_keyboard,
     build_settings_keyboard,
     build_target_price_keyboard,
+    build_tracking_mode_keyboard,
     build_variant_selection_keyboard,
     build_welcome_keyboard,
 )
@@ -224,19 +225,38 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /track <url> <target_price> [pincode]."""
+    """Handle /track [url] [target_price] [pincode] or interactive conversational onboarding."""
     if not update.effective_user or not update.effective_message:
         return
 
     args = context.args if isinstance(context.args, list) else []
-    if len(args) < 2:
-        await update.effective_message.reply_html(
-            "⚠️ <b>Usage:</b> <code>/track &lt;url&gt; &lt;target_price&gt; [pincode]</code>\n\n"
-            "<b>Example:</b>\n"
-            "<code>/track https://nakpro.com/products/impact-whey-protein 1200</code>"
+
+    # 1. If user sent just /track with no arguments: ask them for the product URL
+    if len(args) == 0:
+        context.user_data["awaiting_track_url"] = True
+        prompt_text = (
+            "🔗 <b>Send Product Link to Track</b>\n\n"
+            "Please paste or send the URL of the product you want to track:\n\n"
+            "• 🌿 <b>Nutrabay:</b> Shilajit, Whey Protein, Creatine, Vitamins\n"
+            "• 📦 <b>Amazon & Amazon Fresh:</b> Groceries & Supplements\n"
+            "• 🥛 <b>Amul Shop:</b> Whey Protein, Paneer, Butter, Ghee\n"
+            "• 🛍️ <b>Shopify Stores:</b> Nakpro, MuscleBlaze, The Whole Truth, etc.\n\n"
+            "<i>💡 After sending the link, you can choose to track when it's back in stock, track significant discounts, or set a target price!</i>"
         )
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        cancel_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel")]
+        ])
+        await update.effective_message.reply_html(prompt_text, reply_markup=cancel_kb)
         return
 
+    # 2. If user sent /track <url> with only the URL: directly inspect and show tracking mode options!
+    if len(args) == 1:
+        url = args[0].strip()
+        await _inspect_url_and_prompt_modes(update, context, url)
+        return
+
+    # 3. Direct power-user shortcut: /track <url> <target_price> [pincode]
     url = args[0].strip()
     raw_target = args[1].strip()
     target_price_paise = parse_inr_to_paise(raw_target)
@@ -270,7 +290,6 @@ async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await status_msg.edit_text(conf_text, parse_mode="HTML")
 
     except VariantAmbiguousError as amb_err:
-        # Product has multiple variants; prompt user to select with inline buttons
         variants = amb_err.variants
         context.user_data["pending_track"] = {
             "url": url,
@@ -950,23 +969,44 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.effective_message.reply_html(f"❌ Failed to set target price: {exc}")
             return
 
-    # 2. Check if text contains a product URL
+    # 2. Check if user is awaiting URL or message contains a product URL
+    is_awaiting_url = context.user_data.pop("awaiting_track_url", False)
     url_match = re.search(r"https?://[^\s]+", text)
-    if not url_match:
+    if url_match:
+        url = url_match.group(0)
+        await _inspect_url_and_prompt_modes(update, context, url)
+        return
+    elif is_awaiting_url:
+        await update.effective_message.reply_html(
+            "⚠️ That doesn't look like a valid link. Please send a full product URL starting with <code>https://</code>\n\n"
+            "<b>Example:</b>\n<code>https://nutrabay.com/product/nutrabay-pure-shilajit/</code>"
+        )
+        context.user_data["awaiting_track_url"] = True
         return
 
-    url = url_match.group(0)
 
-    try:
-        ProviderRegistry.get_provider_for_url(url)
-    except Exception:
-        # Not a supported store URL
+async def _inspect_url_and_prompt_modes(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, url: str
+) -> None:
+    """Inspects product URL and presents intuitive tracking mode options."""
+    if not update.effective_user or not update.effective_message:
         return
 
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
     status_msg = await update.effective_message.reply_text("🔍 Inspecting product URL...")
 
     try:
-        # If Amul URL, route to Amul stock tracking immediately!
+        ProviderRegistry.get_provider_for_url(url)
+    except Exception as exc:
+        await status_msg.edit_text(
+            f"❌ <b>Unsupported store link:</b>\n{exc}\n\n"
+            "Supported stores: Nutrabay, Amazon, Amul Shop, and Shopify stores (Nakpro, MuscleBlaze, etc.).",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        # If Amul URL, resolve Amul listing
         if "shop.amul.com" in url or "amul.com" in url:
             user = await tracker_service.get_or_register_user(
                 telegram_id=update.effective_user.id,
@@ -996,29 +1036,16 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 is_monitored=True,
             )
             saved_listing = await tracker_service.listing_repo.get_or_create_listing(listing)
-            is_in_stock = quote.available and (quote.inventory_quantity is None or quote.inventory_quantity > 0)
-            saved_sub = await tracker_service.sub_repo.create_or_update_subscription(
-                Subscription(
-                    telegram_id=update.effective_user.id,
-                    listing_id=saved_listing.id,
-                    target_price_paise=quote.price_paise or 0,
-                    notify_on_restock=True,
-                    is_active=True,
-                    alert_rearmed=not is_in_stock,
-                    last_alerted_price_paise=quote.price_paise if is_in_stock else None,
-                )
+            preview_text = format_stepwise_product_preview(saved_listing)
+            kb = build_tracking_mode_keyboard(
+                listing_id=saved_listing.id,
+                current_price_paise=saved_listing.last_price_paise or 0,
+                is_in_stock=saved_listing.last_available if saved_listing.last_available is not None else True,
             )
-            conf_text = format_amul_tracking_confirmed(
-                saved_listing.product_title,
-                sku,
-                pincode,
-                quote.available,
-                quote.inventory_quantity or 0,
-            )
-            await status_msg.edit_text(conf_text, parse_mode="HTML")
+            await status_msg.edit_text(preview_text, reply_markup=kb, parse_mode="HTML")
             return
 
-        # For Amazon, Nakpro, MuscleBlaze, etc.: Stepwise onboarding!
+        # For Nutrabay, Shopify, Amazon, etc.: Stepwise onboarding with tracking mode selection
         listing = await tracker_service.resolve_and_preview_url(
             telegram_id=update.effective_user.id,
             url=url,
@@ -1026,13 +1053,11 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             first_name=update.effective_user.first_name,
         )
 
-        # Save pending custom price target for convenience
-        context.user_data["awaiting_custom_price"] = listing.id
-
         preview_text = format_stepwise_product_preview(listing)
-        kb = build_target_price_keyboard(
+        kb = build_tracking_mode_keyboard(
             listing_id=listing.id,
             current_price_paise=listing.last_price_paise or 0,
+            is_in_stock=listing.last_available if listing.last_available is not None else True,
         )
         await status_msg.edit_text(preview_text, reply_markup=kb, parse_mode="HTML")
 

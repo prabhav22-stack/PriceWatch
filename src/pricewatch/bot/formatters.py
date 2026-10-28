@@ -67,6 +67,7 @@ def format_help_message() -> str:
 def format_stepwise_product_preview(listing: CanonicalListing) -> str:
     price_str = format_paise_to_inr(listing.last_price_paise)
     mrp_str = format_paise_to_inr(listing.last_mrp_paise) if listing.last_mrp_paise else None
+    stock_badge = "🟢 In Stock" if listing.last_available else "🔴 Out of Stock"
 
     lines = [
         "🔍 <b>Product Found!</b>",
@@ -81,13 +82,56 @@ def format_stepwise_product_preview(listing: CanonicalListing) -> str:
         disc = int(round((listing.last_mrp_paise - listing.last_price_paise) * 100 / listing.last_mrp_paise))
         lines.append(f"🏷️ <b>MRP:</b> <s>{mrp_str}</s> (<b>{disc}% OFF</b>)")
 
+    lines.append(f"📊 <b>Availability:</b> <b>{stock_badge}</b>")
+
     if listing.pincode:
         lines.append(f"📍 <b>Delivery Pincode:</b> <code>{listing.pincode}</code>")
 
     lines.extend([
         "",
-        "🎯 <b>What target price would you like to set for alert?</b>",
-        "<i>Select a quick discount option below or type a custom price:</i>",
+        "⚙️ <b>How would you like to track this product?</b>",
+        "<i>What target price would you like to set, or choose an alert mode below (no target price needed for stock or discount alerts!):</i>",
+    ])
+    return "\n".join(lines)
+
+
+def format_tracking_mode_confirmation(listing: CanonicalListing, sub: Subscription, mode: str) -> str:
+    price_str = format_paise_to_inr(listing.last_price_paise)
+    mrp_str = format_paise_to_inr(listing.last_mrp_paise) if listing.last_mrp_paise else None
+
+    if mode == "stock":
+        header = "📦 <b>Back-in-Stock Tracker Active!</b>"
+        rule = "You will receive an instant notification as soon as this item is back in stock!"
+    elif mode == "discount":
+        header = "🔥 <b>Significant Discount Tracker Active!</b>"
+        rule = "PriceWatch 30-day memory will alert you whenever there is a ≥10% price drop or a new 30-day low!"
+    elif mode == "both":
+        header = "⚡ <b>Smart Tracker Active (Stock + Discounts)!</b>"
+        rule = "Alerts enabled for both restocks and significant discounts (≥10% drop or 30-day low)!"
+    else:
+        target_str = format_paise_to_inr(sub.target_price_paise)
+        header = "🎯 <b>Price Target Set!</b>"
+        rule = f"You will be alerted when the price drops to or below <code>{target_str}</code>."
+
+    lines = [
+        header,
+        "",
+        f"📦 <b>Title:</b> {listing.product_title}",
+    ]
+    if listing.variant_title and listing.variant_title != "Default":
+        lines.append(f"🏷️ <b>Variant:</b> {listing.variant_title}")
+
+    lines.append(f"💰 <b>Current Price:</b> <code>{price_str}</code>")
+    if mrp_str and listing.last_price_paise and listing.last_mrp_paise and listing.last_mrp_paise > listing.last_price_paise:
+        disc = int(round((listing.last_mrp_paise - listing.last_price_paise) * 100 / listing.last_mrp_paise))
+        lines.append(f"🏷️ <b>MRP:</b> <s>{mrp_str}</s> (<b>{disc}% OFF</b>)")
+
+    stock_badge = "🟢 In Stock" if listing.last_available else "🔴 Out of Stock"
+    lines.append(f"📊 <b>Stock Status:</b> <b>{stock_badge}</b>")
+
+    lines.extend([
+        "",
+        f"🔔 <b>Tracking Rule:</b> {rule}",
     ])
     return "\n".join(lines)
 
