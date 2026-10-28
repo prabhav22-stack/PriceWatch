@@ -136,18 +136,29 @@ async def test_bot_menu_commands_configuration():
     mock_bot.set_my_commands.assert_called_once_with(DEFAULT_BOT_COMMANDS)
     mock_bot.set_chat_menu_button.assert_called_once()
     
-    # Verify core commands from user's screenshot exist
+    # Verify all working commands exist in menu
     cmd_names = [cmd.command for cmd in DEFAULT_BOT_COMMANDS]
     assert "start" in cmd_names
+    assert "help" in cmd_names
     assert "setpincode" in cmd_names
     assert "pincode" in cmd_names
     assert "products" in cmd_names
-    assert "autoorder" in cmd_names
     assert "settings" in cmd_names
     assert "tracked" in cmd_names
     assert "favourites" in cmd_names
-    assert "support" in cmd_names
+    assert "search" in cmd_names
+    assert "untrack" in cmd_names
+    assert "track" in cmd_names
+    assert "trackall" in cmd_names
+    assert "repeat" in cmd_names
+    assert "count" in cmd_names
+    assert "analytics" in cmd_names
+    assert "history" in cmd_names
     assert "map" in cmd_names
+    assert "status" in cmd_names
+    assert "support" in cmd_names
+    # Ensure non-working commands like autoorder are not cluttering the menu
+    assert "autoorder" not in cmd_names
 
 
 @pytest.mark.asyncio

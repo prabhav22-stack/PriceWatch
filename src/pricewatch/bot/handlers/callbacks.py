@@ -113,8 +113,14 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
         # 4. Untrack confirmation / deletion
         if data.startswith("del:confirm:"):
             listing_id = int(data.split(":")[2])
+            listing = await tracker_service.get_listing(listing_id)
+            title = listing.product_title if listing else f"Listing #{listing_id}"
             await tracker_service.untrack_product(user_id, listing_id)
-            await query.edit_message_text(f"🗑️ Successfully removed listing <code>{listing_id}</code> from tracking.", parse_mode="HTML")
+            await query.edit_message_text(
+                f"🔍 <b>Untracking product: {title}</b>\n"
+                f"You will no longer receive updates for this product.",
+                parse_mode="HTML",
+            )
             return
 
         if data == "del:cancel":
@@ -247,8 +253,13 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             user_subs = await tracker_service.list_user_subscriptions(user_id)
             match = next((s for s in user_subs if s[1].provider_code == "amul" and s[1].external_variant_id == sku), None)
             if match:
+                prod_title = match[1].product_title
                 await tracker_service.untrack_product(user_id, match[1].id)
-                await query.edit_message_text(f"🗑️ Stopped tracking stock for Amul <code>{sku}</code>.", parse_mode="HTML")
+                await query.edit_message_text(
+                    f"🔍 <b>Untracking product: {prod_title}</b>\n"
+                    f"You will no longer receive updates for this product.",
+                    parse_mode="HTML",
+                )
             else:
                 await query.edit_message_text(f"❌ Item <code>{sku}</code> not found in your tracking list.", parse_mode="HTML")
             return

@@ -11,22 +11,25 @@ from pricewatch.logging_setup import get_logger
 logger = get_logger("commands_menu")
 
 DEFAULT_BOT_COMMANDS: List[BotCommand] = [
-    BotCommand("start", "Start the bot"),
-    BotCommand("setpincode", "Set your pincode"),
-    BotCommand("pincode", "Get your current pincode"),
-    BotCommand("products", "Browse Amul products"),
-    BotCommand("autoorder", "Toggle auto-ordering of products"),
+    BotCommand("start", "Start the bot & main menu"),
+    BotCommand("help", "Help guide & command reference"),
+    BotCommand("products", "Browse Amul products & stock"),
+    BotCommand("tracked", "List all your tracked products"),
     BotCommand("trackall", "Toggle restock alerts for all protein items"),
     BotCommand("repeat", "Set repeat notification limit (1-10 or 0 for until OOS)"),
-    BotCommand("settings", "View or change your settings"),
-    BotCommand("tracked", "List all tracked products"),
-    BotCommand("favourites", "List your favourite products"),
-    BotCommand("support", "Get support"),
-    BotCommand("map", "View interactive map"),
-    BotCommand("search", "Search Amul products"),
+    BotCommand("settings", "Notification settings & preferences"),
+    BotCommand("pincode", "Get current delivery pincode"),
+    BotCommand("setpincode", "Set a new delivery pincode"),
+    BotCommand("favourites", "List your starred favourite products"),
+    BotCommand("search", "Search Amul products by keyword"),
+    BotCommand("untrack", "Stop tracking a product"),
+    BotCommand("track", "Track a product link & target price"),
+    BotCommand("count", "Real-time stock quantity tables"),
     BotCommand("analytics", "Warehouse restock & inventory metrics"),
-    BotCommand("count", "Product stock quantity tables"),
     BotCommand("history", "View price trend chart"),
+    BotCommand("map", "Amul warehouse delivery hubs"),
+    BotCommand("status", "System health & uptime status"),
+    BotCommand("support", "Support & GitHub community"),
 ]
 
 

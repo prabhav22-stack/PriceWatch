@@ -56,55 +56,75 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Check for deeplink payload: e.g. /start track_WPCCP01_01, /start fav_WPCCP01_01, /start ao_WPCCP01_01
     if context.args:
         payload = context.args[0].strip()
+
+        # Delete the incoming /start <payload> message immediately so it vanishes from chat
+        try:
+            await update.effective_message.delete()
+        except Exception:
+            pass
+
         if payload.startswith("fav_"):
             sku = payload.replace("fav_", "")
+            prod_name = sku
+            try:
+                pincode = db_user.default_pincode or "842002"
+                provider = AmulProvider()
+                cat_items = await provider.fetch_category_products(category_id="protein", pincode=pincode, limit=100)
+                m = next((it for it in cat_items if it.get("sku") == sku), None)
+                if m and m.get("name"):
+                    prod_name = m["name"]
+            except Exception:
+                pass
+
             added = await tracker_service.toggle_user_favourite(user.id, sku)
             if added:
-                await update.effective_message.reply_html(
-                    f"⭐ <b>Added <code>{sku}</code> to your favourites!</b>\n\n"
-                    "View all your starred products anytime by typing <code>/favourites</code>."
+                await update.effective_chat.send_message(
+                    f"⭐ <b>Added to favourites:</b> {prod_name}\n\n"
+                    "View all your starred products anytime with <code>/favourites</code>.",
+                    parse_mode="HTML",
                 )
             else:
-                await update.effective_message.reply_html(
-                    f"🗑️ <b>Removed <code>{sku}</code> from your favourites.</b>"
+                await update.effective_chat.send_message(
+                    f"🗑️ <b>Removed from favourites:</b> {prod_name}",
+                    parse_mode="HTML",
                 )
             return
 
-        if payload.startswith("ao_"):
-            sku = payload.replace("ao_", "")
-            current_skus = list(db_user.auto_order_skus or [])
-            if sku in current_skus:
-                current_skus.remove(sku)
-                await tracker_service.update_user_settings(user.id, auto_order_skus=current_skus)
-                await update.effective_message.reply_html(
-                    f"⚡ <b>Removed <code>{sku}</code> from Auto-Order list.</b>"
-                )
-            else:
-                current_skus.append(sku)
-                await tracker_service.update_user_settings(
-                    user.id, auto_order_skus=current_skus, auto_order_enabled=True
-                )
-                await update.effective_message.reply_html(
-                    f"⚡ <b>Added <code>{sku}</code> to Auto-Order list!</b>\n\n"
-                    "PriceWatch will automatically place a COD checkout when restock is detected.\n"
-                    "Configure or review anytime with <code>/autoorder</code>."
-                )
+        if payload.startswith("ao_") or payload.startswith("addautoorder_") or payload.startswith("removeautoorder_"):
+            await update.effective_chat.send_message(
+                "⚡ Amul automated checkout is currently disabled. Use <code>/trackall</code> for instant restock alerts!",
+                parse_mode="HTML",
+            )
             return
 
         if payload.startswith("track_"):
             sku = payload.replace("track_", "")
+            user_subs = await tracker_service.list_user_subscriptions(user.id)
+            match = next((s for s in user_subs if s[1].provider_code == "amul" and s[1].external_variant_id == sku), None)
+
             pincode = db_user.default_pincode or "842002"
             provider = AmulProvider()
             quote = await provider.fetch_quote("", sku, sku, pincode=pincode)
 
             prod_alias = sku
+            product_title = quote.raw_variant_title or sku
             try:
                 cat_items = await provider.fetch_category_products(category_id="protein", pincode=pincode, limit=100)
                 m = next((it for it in cat_items if it.get("sku") == sku), None)
-                if m and m.get("alias"):
-                    prod_alias = m["alias"].replace(" ", "")
+                if m:
+                    if m.get("alias"):
+                        prod_alias = m["alias"].replace(" ", "")
+                    if m.get("name"):
+                        product_title = m["name"]
             except Exception:
                 pass
+
+            if match:
+                await update.effective_chat.send_message(
+                    f"✅ You are already tracking the product: <b>{product_title}</b>",
+                    parse_mode="HTML",
+                )
+                return
 
             listing = CanonicalListing(
                 provider_code="amul",
@@ -113,7 +133,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 external_variant_id=sku,
                 pincode=pincode,
                 canonical_url=f"https://shop.amul.com/en/product/{prod_alias}",
-                product_title=quote.raw_variant_title or sku,
+                product_title=product_title,
                 variant_title="Standard Pack",
                 currency="INR",
                 last_price_paise=quote.price_paise,
@@ -135,26 +155,41 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     last_alerted_price_paise=quote.price_paise if is_in_stock else None,
                 )
             )
-            conf_text = format_amul_tracking_confirmed(
-                saved_listing.product_title,
-                sku,
-                pincode,
-                quote.available,
-                quote.inventory_quantity or 0,
+            await update.effective_chat.send_message(
+                f"🔍 <b>Tracking product: {product_title}</b>\n"
+                f"You will receive updates when the product is available.",
+                parse_mode="HTML",
             )
-            kb = build_listing_card_keyboard(saved_listing.id)
-            await update.effective_message.reply_html(conf_text, reply_markup=kb)
             return
 
         if payload.startswith("untrack_"):
             sku = payload.replace("untrack_", "")
             subs = await tracker_service.list_user_subscriptions(user.id)
             match = next((s for s in subs if s[1].provider_code == "amul" and s[1].external_variant_id == sku), None)
+
+            prod_name = sku
             if match:
+                prod_name = match[1].product_title
                 await tracker_service.untrack_product(user.id, match[1].id)
-                await update.effective_message.reply_html(f"🗑️ Stopped tracking stock for Amul <code>{sku}</code>.")
+                await update.effective_chat.send_message(
+                    f"🔍 <b>Untracking product: {prod_name}</b>\n"
+                    f"You will no longer receive updates for this product.",
+                    parse_mode="HTML",
+                )
             else:
-                await update.effective_message.reply_html(f"❌ Item <code>{sku}</code> not found in your tracking list.")
+                pincode = db_user.default_pincode or "842002"
+                provider = AmulProvider()
+                try:
+                    cat_items = await provider.fetch_category_products(category_id="protein", pincode=pincode, limit=100)
+                    m = next((it for it in cat_items if it.get("sku") == sku), None)
+                    if m and m.get("name"):
+                        prod_name = m["name"]
+                except Exception:
+                    pass
+                await update.effective_chat.send_message(
+                    f"❌ You are not tracking the product: <b>{prod_name}</b>",
+                    parse_mode="HTML",
+                )
             return
 
     text = format_welcome_message(user.first_name or "there")
@@ -270,17 +305,44 @@ async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             pass
 
     if not listing_id:
-        await update.effective_message.reply_html(
-            "⚠️ <b>Usage:</b> <code>/untrack &lt;listing_id&gt;</code>\n"
-            "Find your listing ID via <code>/list</code>."
-        )
+        subs = await tracker_service.list_user_subscriptions(update.effective_user.id)
+        if not subs:
+            await update.effective_message.reply_html(
+                "📭 <b>You have no active tracked products to untrack.</b>\n\n"
+                "Browse products with <code>/products</code> or paste any product link to start tracking."
+            )
+            return
+        lines = [
+            "🗑️ <b>Select a product to stop tracking:</b>\n"
+        ]
+        for sub, listing in subs:
+            lines.append(f"• <b>{listing.product_title}</b>: /untrack_{listing.id}")
+        lines.append("\nTap any link above to untrack immediately.")
+        await update.effective_message.reply_html("\n".join(lines))
         return
+
+    # Delete the incoming /untrack_<id> command message so it vanishes from chat!
+    if "_" in raw_text:
+        try:
+            await update.effective_message.delete()
+        except Exception:
+            pass
+
+    listing = await tracker_service.get_listing(listing_id)
+    listing_name = listing.product_title if listing else f"Listing #{listing_id}"
 
     success = await tracker_service.untrack_product(update.effective_user.id, listing_id)
     if success:
-        await update.effective_message.reply_html(f"🗑️ Successfully removed listing <code>{listing_id}</code>.")
+        await update.effective_chat.send_message(
+            f"🔍 <b>Untracking product: {listing_name}</b>\n"
+            f"You will no longer receive updates for this product.",
+            parse_mode="HTML",
+        )
     else:
-        await update.effective_message.reply_html(f"❌ Listing <code>{listing_id}</code> not found in your tracking list.")
+        await update.effective_chat.send_message(
+            f"❌ Product <b>{listing_name}</b> not found in your tracking list.",
+            parse_mode="HTML",
+        )
 
 
 async def pincode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -317,16 +379,21 @@ async def setpincode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not update.effective_user or not update.effective_message:
         return
 
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
     args = context.args if isinstance(context.args, list) else []
     if not args or not _PINCODE_REGEX.match(args[0].strip()):
+        user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+        curr_pin = user.default_pincode or "842002"
+        amul_provider = AmulProvider()
+        substore = await amul_provider.resolve_substore_for_pincode(curr_pin)
         await update.effective_message.reply_html(
-            "⚠️ <b>Usage:</b> <code>/setpincode &lt;6-digit pincode&gt;</code>\n"
+            f"📍 <b>Current Delivery Pincode:</b> <code>{curr_pin}</code> (Warehouse: <i>{substore}</i>)\n\n"
+            "To set a new pincode, send: <code>/setpincode &lt;6-digit pincode&gt;</code>\n"
             "<b>Example:</b> <code>/setpincode 842002</code>"
         )
         return
 
     new_pin = args[0].strip()
-    tracker_service: TrackerService = context.bot_data["tracker_service"]
     await tracker_service.set_user_pincode(update.effective_user.id, new_pin)
     amul_provider = AmulProvider()
     substore = await amul_provider.resolve_substore_for_pincode(new_pin)
@@ -585,91 +652,19 @@ async def settings_command_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 async def autoorder_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /autoorder command and sub-actions (login, otp, toggle, add, remove)."""
+    """Handle /autoorder command."""
     if not update.effective_user or not update.effective_message:
         return
 
-    tracker_service: TrackerService = context.bot_data["tracker_service"]
-    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
-    ao_service = AmulAutoOrderService()
-
-    args = context.args if isinstance(context.args, list) else []
-    if not args:
-        text = format_auto_order_overview(user)
-        await update.effective_message.reply_html(text)
-        return
-
-    subaction = args[0].lower()
-
-    if subaction == "login":
-        if len(args) < 2:
-            await update.effective_message.reply_html("⚠️ <b>Usage:</b> <code>/autoorder login &lt;10-digit-mobile&gt;</code>")
-            return
-        phone = args[1]
-        pincode = user.default_pincode or "842002"
-        res = await ao_service.request_otp(phone=phone, pincode=pincode)
-        if res["success"]:
-            await tracker_service.update_user_settings(user.telegram_id, auto_order_phone=res["phone"])
-            await update.effective_message.reply_html(
-                f"✅ {res['message']}\n\n"
-                "To finish, type: <code>/autoorder otp &lt;6-digit-code&gt;</code>"
-            )
-        else:
-            await update.effective_message.reply_html(f"❌ {res['message']}")
-        return
-
-    if subaction == "otp":
-        if len(args) < 2:
-            await update.effective_message.reply_html("⚠️ <b>Usage:</b> <code>/autoorder otp &lt;6-digit-code&gt;</code>")
-            return
-        otp = args[1]
-        phone = user.auto_order_phone or ""
-        if not phone:
-            await update.effective_message.reply_html("❌ Please request an OTP first using <code>/autoorder login &lt;phone&gt;</code>")
-            return
-        pincode = user.default_pincode or "842002"
-        res = await ao_service.verify_otp(phone=phone, otp=otp, pincode=pincode)
-        if res["success"]:
-            await tracker_service.update_user_settings(
-                user.telegram_id,
-                auto_order_auth_token=res["auth_token"],
-                auto_order_address_id=res.get("address_id", "addr_primary"),
-                auto_order_enabled=True,
-            )
-            await update.effective_message.reply_html(f"🎉 {res['message']}\n\nAuto-order is now <b>ENABLED 🟢</b>!")
-        else:
-            await update.effective_message.reply_html(f"❌ {res['message']}")
-        return
-
-    if subaction == "toggle":
-        new_state = not user.auto_order_enabled
-        await tracker_service.update_user_settings(user.telegram_id, auto_order_enabled=new_state)
-        state_label = "ENABLED 🟢" if new_state else "DISABLED ⚪"
-        await update.effective_message.reply_html(f"⚡ Auto-Order status updated: <b>{state_label}</b>")
-        return
-
-    if subaction == "add":
-        if len(args) < 2:
-            await update.effective_message.reply_html("⚠️ <b>Usage:</b> <code>/autoorder add &lt;sku&gt;</code>")
-            return
-        sku = args[1].strip()
-        skus = list(set((user.auto_order_skus or []) + [sku]))
-        await tracker_service.update_user_settings(user.telegram_id, auto_order_skus=skus, auto_order_enabled=True)
-        await update.effective_message.reply_html(f"✅ Added <code>{sku}</code> to auto-order list!")
-        return
-
-    if subaction == "remove":
-        if len(args) < 2:
-            await update.effective_message.reply_html("⚠️ <b>Usage:</b> <code>/autoorder remove &lt;sku&gt;</code>")
-            return
-        sku = args[1].strip()
-        skus = [s for s in (user.auto_order_skus or []) if s != sku]
-        await tracker_service.update_user_settings(user.telegram_id, auto_order_skus=skus)
-        await update.effective_message.reply_html(f"🗑️ Removed <code>{sku}</code> from auto-order list.")
-        return
-
-    # Fallback
-    await update.effective_message.reply_html(format_auto_order_overview(user))
+    text = (
+        "⚡ <b>Amul Auto-Ordering Notice</b>\n\n"
+        "Direct automated checkout on Amul Shop requires dedicated merchant credentials and is currently disabled to prevent failed transactions.\n\n"
+        "<b>Recommended Setup for Instant Purchase:</b>\n"
+        "• Turn on <b>All-Protein Alerts</b> with <code>/trackall</code> (or in <code>/settings</code>).\n"
+        "• Set repeated alerts with <code>/repeat 0</code> so you get alerted continuously while in stock.\n"
+        "• Restock alerts include direct instant checkout links to purchase before stock runs out!"
+    )
+    await update.effective_message.reply_html(text)
 
 
 async def trackall_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

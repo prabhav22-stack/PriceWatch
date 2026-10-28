@@ -44,13 +44,11 @@ def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
     style_once = "✅ Once 1️⃣" if user.tracking_style == "once" else "Once 1️⃣"
 
     all_protein_on = "ALL_PROTEIN" in (user.favourite_skus or [])
-    btn_ap = "🔔 All-Protein: ON" if all_protein_on else "🔕 All-Protein: OFF"
-    btn_ao = "⚡ Auto-Order: ON" if user.auto_order_enabled else "⚡ Auto-Order: OFF"
+    btn_ap = "🔔 All-Protein Alerts: ON" if all_protein_on else "🔕 All-Protein Alerts: OFF"
 
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(btn_ap, callback_data="cfg:toggle_all_protein"),
-            InlineKeyboardButton(btn_ao, callback_data="cfg:toggle_ao"),
         ],
         [
             InlineKeyboardButton(btn_1, callback_data="cfg:repeat:1"),
