@@ -78,51 +78,71 @@ async def run_server_async(port: int, webhook_url: str) -> None:
     else:
         repo = MemoryRepository()
 
-    tracker_service = TrackerService(
-        listing_repo=repo,
-        subscription_repo=repo,
-        user_repo=repo,
-    )
+    ptb_app = None
+    amul_task = None
 
-    ptb_app = create_telegram_app(tracker_service=tracker_service)
+    # Check if bot token is configured
+    if settings.TELEGRAM_BOT_TOKEN:
+        try:
+            tracker_service = TrackerService(
+                listing_repo=repo,
+                subscription_repo=repo,
+                user_repo=repo,
+            )
+            ptb_app = create_telegram_app(tracker_service=tracker_service)
+            await ptb_app.initialize()
+            await ptb_app.start()
+            try:
+                await configure_bot_menu_button(ptb_app.bot)
+            except Exception as menu_exc:
+                logger.warning("Failed to configure bot menu button", error=str(menu_exc))
 
-    # Initialize and start PTB Application
-    await ptb_app.initialize()
-    await ptb_app.start()
-    await configure_bot_menu_button(ptb_app.bot)
+            # Register webhook if URL is valid (not localhost)
+            if webhook_url and not ("localhost" in webhook_url or "127.0.0.1" in webhook_url):
+                try:
+                    logger.info("Setting Telegram webhook...", webhook_url=webhook_url)
+                    await ptb_app.bot.set_webhook(
+                        url=webhook_url,
+                        secret_token=settings.TELEGRAM_WEBHOOK_SECRET or None,
+                        drop_pending_updates=True,
+                    )
+                    logger.info("Telegram webhook successfully registered")
+                except Exception as wh_exc:
+                    logger.error("Failed to set Telegram webhook", error=str(wh_exc), url=webhook_url)
+            else:
+                logger.warning("Skipping Telegram webhook registration (localhost or empty webhook URL)", webhook_url=webhook_url)
 
-    # Register webhook with Telegram
-    logger.info("Setting Telegram webhook...", webhook_url=webhook_url)
-    await ptb_app.bot.set_webhook(
-        url=webhook_url,
-        secret_token=settings.TELEGRAM_WEBHOOK_SECRET or None,
-        drop_pending_updates=True,
-    )
-    logger.info("Telegram webhook successfully registered")
+            # Launch high-frequency Amul stock poller (Tier 1: 30s)
+            amul_task = asyncio.create_task(
+                run_amul_poller(repo=repo, bot=ptb_app.bot, interval_seconds=settings.AMUL_CHECK_INTERVAL_SECONDS)
+            )
+        except Exception as bot_exc:
+            logger.error("Failed to initialize Telegram application", error=str(bot_exc))
+    else:
+        logger.warning("TELEGRAM_BOT_TOKEN is not set. Web server will serve healthz only until token is configured.")
 
     # Configure Tornado HTTP routes
-    tornado_app = tornado.web.Application([
+    handlers = [
         (r"/healthz", HealthHandler),
         (r"/", HealthHandler),
-        (r"/webhook", TelegramWebhookHandler, dict(ptb_app=ptb_app)),
-    ])
+    ]
+    if ptb_app:
+        handlers.append((r"/webhook", TelegramWebhookHandler, dict(ptb_app=ptb_app)))
 
+    tornado_app = tornado.web.Application(handlers)
     tornado_app.listen(port, address="0.0.0.0")
     logger.info("PriceWatch HTTP server listening on 0.0.0.0", port=port)
-
-    # Launch high-frequency Amul stock poller (Tier 1: 30s)
-    amul_task = asyncio.create_task(
-        run_amul_poller(repo=repo, bot=ptb_app.bot, interval_seconds=settings.AMUL_CHECK_INTERVAL_SECONDS)
-    )
 
     # Keep running
     try:
         await asyncio.Event().wait()
     finally:
         logger.info("Shutting down bot and web server...")
-        amul_task.cancel()
-        await ptb_app.stop()
-        await ptb_app.shutdown()
+        if amul_task:
+            amul_task.cancel()
+        if ptb_app:
+            await ptb_app.stop()
+            await ptb_app.shutdown()
 
 
 def main():
