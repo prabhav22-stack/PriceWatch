@@ -49,7 +49,7 @@ async def run_worker(
 
     repo = get_default_repository()
     orchestrator = CheckOrchestrator()
-    alert_service = AlertService(subscription_repo=repo)
+    alert_service = AlertService(subscription_repo=repo, listing_repo=repo)
 
     # Claim due listings with atomic lease
     claimed = await repo.claim_due_listings(

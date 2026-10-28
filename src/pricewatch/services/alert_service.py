@@ -12,7 +12,7 @@ from pricewatch.domain.models import (
     Subscription,
 )
 from pricewatch.logging_setup import get_logger
-from pricewatch.repositories.base import BaseSubscriptionRepo, BaseUserRepo
+from pricewatch.repositories.base import BaseListingRepo, BaseSubscriptionRepo, BaseUserRepo
 from pricewatch.validation.normalizer import format_paise_to_inr
 
 logger = get_logger("alert_service")
@@ -31,10 +31,15 @@ class AlertService:
         self,
         subscription_repo: BaseSubscriptionRepo,
         user_repo: Optional[BaseUserRepo] = None,
+        listing_repo: Optional[BaseListingRepo] = None,
         bot: Optional[Any] = None,
     ):
         self.repo = subscription_repo
         self.user_repo = user_repo
+        self.listing_repo = (
+            listing_repo
+            or (subscription_repo if isinstance(subscription_repo, BaseListingRepo) else None)
+        )
         self.bot = bot
         self._cycle_counts: dict[int, int] = {}
         self._last_alerted_ts: dict[int, float] = {}
@@ -46,12 +51,14 @@ class AlertService:
         quote: PriceQuote,
         hysteresis_rearm_pct: int = 3,
         listing: Optional[CanonicalListing] = None,
+        price_summary_30d: Optional[dict] = None,
     ) -> Optional[AlertType]:
         """
         Pure function evaluating alert state machine with hysteresis.
-        Supports target price drops, further drops, significant flash drops, and Amul stock restocks.
+        Supports target price drops, further drops, 30-day significant discount drops, and Amul stock restocks.
+        Price memory analysis is explicitly skipped for Amul store.
         """
-        # 1. Amul Stock Restock Logic (Quantity & Availability focused)
+        # 1. Amul Stock Restock Logic (Quantity & Availability focused - no price memory)
         if listing and listing.provider_code == "amul":
             if quote.available and (quote.inventory_quantity is None or quote.inventory_quantity > 0):
                 if sub.alert_rearmed:
@@ -78,11 +85,25 @@ class AlertService:
             if quote.price_paise <= drop_threshold:
                 return AlertType.FURTHER_DROP
 
-        # Significant Price Drop (>= 10% drop from last price, even if above target)
-        if listing and listing.last_price_paise and sub.alert_rearmed:
-            ten_pct_drop = int(listing.last_price_paise * 0.90)
-            if quote.price_paise <= ten_pct_drop:
-                return AlertType.SIGNIFICANT_DROP
+        # Significant Price Drop (30-day price memory or previous price drop)
+        discount_pct = getattr(settings, "SIGNIFICANT_DISCOUNT_PCT", 10)
+        if sub.alert_rearmed:
+            # 30-day Price Memory evaluation (strictly non-Amul)
+            if price_summary_30d and price_summary_30d.get("median_price"):
+                median = price_summary_30d["median_price"]
+                min_price = price_summary_30d.get("min_price", median)
+                discount_threshold = int(median * (100 - discount_pct) / 100)
+                # Significant discount: >= 10% below 30-day median OR hits 30-day low (at least 5% below median)
+                if quote.price_paise <= discount_threshold or (
+                    quote.price_paise <= min_price and quote.price_paise <= int(median * 0.95)
+                ):
+                    return AlertType.SIGNIFICANT_DROP
+
+            # Fallback to last_price_paise comparison if 30-day history is not yet populated
+            if listing and listing.last_price_paise:
+                drop_threshold = int(listing.last_price_paise * (100 - discount_pct) / 100)
+                if quote.price_paise <= drop_threshold:
+                    return AlertType.SIGNIFICANT_DROP
 
         return None
 
@@ -92,6 +113,7 @@ class AlertService:
         quote: PriceQuote,
         listing: CanonicalListing,
         sub: Subscription,
+        price_summary_30d: Optional[dict] = None,
     ) -> str:
         """Format HTML alert notification message."""
         price_str = format_paise_to_inr(quote.price_paise)
@@ -176,7 +198,12 @@ class AlertService:
         elif alert_type == AlertType.FURTHER_DROP:
             header = "⚡ <b>PRICE DROPPED EVEN FURTHER!</b>"
         elif alert_type == AlertType.SIGNIFICANT_DROP:
-            header = "🔥 <b>SIGNIFICANT PRICE DROP DETECTED!</b>"
+            is_30d_low = (
+                price_summary_30d
+                and quote.price_paise
+                and quote.price_paise <= price_summary_30d.get("min_price", 0)
+            )
+            header = "🔥 <b>LOWEST PRICE IN 30 DAYS!</b>" if is_30d_low else "🔥 <b>SIGNIFICANT PRICE DROP DETECTED!</b>"
         else:
             header = "🔔 <b>PRICE ALERT</b>"
 
@@ -188,10 +215,24 @@ class AlertService:
         if listing.variant_title and listing.variant_title != "Default":
             lines.append(f"🏷️ <b>Variant:</b> {listing.variant_title}")
 
-        if alert_type == AlertType.SIGNIFICANT_DROP and listing.last_price_paise and quote.price_paise:
+        if alert_type == AlertType.SIGNIFICANT_DROP and listing.last_price_paise and quote.price_paise and listing.last_price_paise > quote.price_paise:
             drop_pct = int(round((listing.last_price_paise - quote.price_paise) * 100 / listing.last_price_paise))
             prev_str = format_paise_to_inr(listing.last_price_paise)
-            lines.append(f"📉 <b>Dropped by {drop_pct}%</b> (from {prev_str} ➔ {price_str})")
+            lines.append(f"📉 <b>Recent Drop:</b> from {prev_str} ➔ {price_str} (-{drop_pct}%)")
+
+        # 30-Day Price Memory stats (non-Amul)
+        if price_summary_30d and quote.price_paise and listing.provider_code != "amul":
+            median = price_summary_30d.get("median_price")
+            p_min = price_summary_30d.get("min_price")
+            p_max = price_summary_30d.get("max_price")
+            if median and p_min and p_max:
+                min_str = format_paise_to_inr(p_min)
+                max_str = format_paise_to_inr(p_max)
+                med_str = format_paise_to_inr(median)
+                if quote.price_paise < median:
+                    pct_below = int(round((median - quote.price_paise) * 100 / median))
+                    lines.append(f"📊 <b>30-Day Memory:</b> <code>{pct_below}% below 30-day typical</code>")
+                lines.append(f"📈 <b>30-Day Range:</b> <code>{min_str} - {max_str}</code> (Median: <code>{med_str}</code>)")
 
         lines.extend([
             f"💰 <b>Current Price:</b> <code>{price_str}</code>",
@@ -220,6 +261,14 @@ class AlertService:
         """Process price quote against all active subscriptions for a listing."""
         if not listing.id:
             return 0
+
+        # Fetch 30-day price summary for non-Amul listings if repository available
+        price_summary_30d = None
+        if listing.provider_code != "amul" and self.listing_repo:
+            try:
+                price_summary_30d = await self.listing_repo.get_30d_price_summary(listing.id)
+            except Exception as exc:
+                logger.warning("Failed to fetch 30d price summary", listing_id=listing.id, error=str(exc))
 
         subscriptions = await self.repo.get_active_subscriptions_for_listing(listing.id)
         alerts_sent = 0
@@ -279,7 +328,13 @@ class AlertService:
                                 self._last_alerted_ts[sub.id] = now_ts
                                 self._last_alerted_qty[sub.id] = curr_qty or 0
             else:
-                alert_type = self.evaluate_alert(sub, quote, settings.HYSTERESIS_REARM_PCT, listing=listing)
+                alert_type = self.evaluate_alert(
+                    sub,
+                    quote,
+                    settings.HYSTERESIS_REARM_PCT,
+                    listing=listing,
+                    price_summary_30d=price_summary_30d,
+                )
 
             if not alert_type:
                 continue
@@ -308,12 +363,15 @@ class AlertService:
 
             # 3. Phase 2: Telegram Dispatch
             if self.bot:
-                text = self.format_alert_message(alert_type, quote, listing, sub)
+                text = self.format_alert_message(
+                    alert_type, quote, listing, sub, price_summary_30d=price_summary_30d
+                )
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
                 reply_markup = None
                 if listing.canonical_url and listing.canonical_url.startswith("http"):
+                    btn_label = "🛍️ Order on Amul Now" if listing.provider_code == "amul" else "🛒 View Product"
                     reply_markup = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🛍️ Order on Amul Now", url=listing.canonical_url)]
+                        [InlineKeyboardButton(btn_label, url=listing.canonical_url)]
                     ])
                 try:
                     msg = await self.bot.send_message(

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # Alerting & Thresholds
     HYSTERESIS_REARM_PCT: int = Field(default=3, description="Percent price rise above target to re-arm alert")
     NOTIFY_ON_FURTHER_DROP_PCT: int = Field(default=2, description="Minimum drop percentage to re-trigger alert")
+    SIGNIFICANT_DISCOUNT_PCT: int = Field(default=10, description="Minimum drop percentage below 30-day median to trigger a significant discount alert")
     MAX_ITEMS_PER_USER: int = Field(default=20, description="Maximum active tracked products per user")
 
     @field_validator("TELEGRAM_ADMIN_USER_IDS", mode="before")

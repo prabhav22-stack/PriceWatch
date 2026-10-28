@@ -194,6 +194,37 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         )
         return [PriceObservation(**row) for row in res.data]
 
+    async def get_price_history_since(
+        self, listing_id: int, since: datetime
+    ) -> List[PriceObservation]:
+        res = (
+            self.client.table("price_observations")
+            .select("*")
+            .eq("listing_id", listing_id)
+            .gte("observed_at", since.isoformat())
+            .order("observed_at", desc=False)
+            .execute()
+        )
+        return [PriceObservation(**row) for row in res.data]
+
+    async def get_30d_price_summary(
+        self, listing_id: int
+    ) -> Optional[dict]:
+        from datetime import timedelta, timezone
+        import statistics
+        since = datetime.now(timezone.utc) - timedelta(days=30)
+        observations = await self.get_price_history_since(listing_id, since)
+        prices = [o.price_paise for o in observations if o.price_paise is not None and o.price_paise > 0]
+        if not prices:
+            return None
+        return {
+            "min_price": min(prices),
+            "max_price": max(prices),
+            "avg_price": sum(prices) // len(prices),
+            "median_price": int(statistics.median(prices)),
+            "count": len(prices),
+        }
+
     async def get_active_listings_by_provider(
         self, provider_code: str
     ) -> List[CanonicalListing]:

@@ -1,6 +1,8 @@
 """Telegram Inline Keyboard builders."""
 
-from typing import List, Sequence, Set
+from __future__ import annotations
+
+from typing import List, Optional, Sequence, Set
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from pricewatch.domain.models import CanonicalListing, User, VariantOption

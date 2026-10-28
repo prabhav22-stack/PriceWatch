@@ -87,6 +87,18 @@ class BaseListingRepo(ABC):
         """Fetch historical price observations for a listing."""
 
     @abstractmethod
+    async def get_price_history_since(
+        self, listing_id: int, since: datetime
+    ) -> List[PriceObservation]:
+        """Fetch historical price observations for a listing since a given timestamp."""
+
+    @abstractmethod
+    async def get_30d_price_summary(
+        self, listing_id: int
+    ) -> Optional[dict]:
+        """Compute 30-day price memory metrics: min, max, avg, median, count."""
+
+    @abstractmethod
     async def get_active_listings_by_provider(
         self, provider_code: str
     ) -> List[CanonicalListing]:

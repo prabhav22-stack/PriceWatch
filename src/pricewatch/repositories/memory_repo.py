@@ -182,6 +182,34 @@ class MemoryRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         matching.sort(key=lambda o: o.observed_at or datetime.min)
         return matching[-limit:]
 
+    async def get_price_history_since(
+        self, listing_id: int, since: datetime
+    ) -> List[PriceObservation]:
+        matching = [
+            o for o in self.observations
+            if o.listing_id == listing_id and (o.observed_at is None or o.observed_at >= since)
+        ]
+        matching.sort(key=lambda o: o.observed_at or datetime.min)
+        return matching
+
+    async def get_30d_price_summary(
+        self, listing_id: int
+    ) -> Optional[dict]:
+        from datetime import timedelta
+        import statistics
+        since = datetime.now(timezone.utc) - timedelta(days=30)
+        observations = await self.get_price_history_since(listing_id, since)
+        prices = [o.price_paise for o in observations if o.price_paise is not None and o.price_paise > 0]
+        if not prices:
+            return None
+        return {
+            "min_price": min(prices),
+            "max_price": max(prices),
+            "avg_price": sum(prices) // len(prices),
+            "median_price": int(statistics.median(prices)),
+            "count": len(prices),
+        }
+
     async def get_active_listings_by_provider(
         self, provider_code: str
     ) -> List[CanonicalListing]:
