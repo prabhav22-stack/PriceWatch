@@ -19,7 +19,6 @@ from pricewatch.validation.normalizer import parse_inr_to_paise
 
 _KNOWN_SHOPIFY_DOMAINS = {
     "nakpro.com",
-    "muscleblaze.com",
     "kapiva.in",
     "bepure.co.in",
     "myprotein.co.in",

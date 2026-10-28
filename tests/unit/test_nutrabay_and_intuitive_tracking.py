@@ -24,19 +24,11 @@ def test_nutrabay_provider_registration_and_can_handle():
 
 
 def test_tracking_mode_keyboard_structure():
-    # Case 1: Out of stock product
-    kb_oos = build_tracking_mode_keyboard(listing_id=10, current_price_paise=49900, is_in_stock=False)
-    button_data = [btn.callback_data for row in kb_oos.inline_keyboard for btn in row]
-    assert "trk_mode:10:stock" in button_data
-    assert "trk_mode:10:discount" in button_data
-    assert "trk_mode:10:both" in button_data
+    kb = build_tracking_mode_keyboard(listing_id=10, current_price_paise=49900, is_in_stock=False)
+    button_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "trk_mode:10:auto" in button_data
     assert "trk_mode:10:target" in button_data
-
-    # Case 2: In-stock product
-    kb_in = build_tracking_mode_keyboard(listing_id=10, current_price_paise=49900, is_in_stock=True)
-    button_data_in = [btn.callback_data for row in kb_in.inline_keyboard for btn in row]
-    assert "trk_mode:10:stock" in button_data_in
-    assert "trk_mode:10:discount" in button_data_in
+    assert "trk:cancel" in button_data
 
 
 @pytest.mark.asyncio
@@ -58,7 +50,7 @@ async def test_track_handler_interactive_prompt_no_args():
 
 
 @pytest.mark.asyncio
-async def test_trk_mode_callbacks_without_target_price():
+async def test_trk_mode_auto_tracking_without_target_price():
     repo = MemoryRepository()
     tracker_service = TrackerService(repo, repo, repo)
 
@@ -79,9 +71,8 @@ async def test_trk_mode_callbacks_without_target_price():
         )
     )
 
-    # 1. Test "stock" mode
     query = MagicMock()
-    query.data = f"trk_mode:{listing.id}:stock"
+    query.data = f"trk_mode:{listing.id}:auto"
     query.from_user.id = 123456
     query.answer = AsyncMock()
     query.edit_message_text = AsyncMock()
@@ -102,19 +93,9 @@ async def test_trk_mode_callbacks_without_target_price():
     assert sub.alert_rearmed is True  # rearmed because currently OOS
     query.edit_message_text.assert_called_once()
     conf_text = query.edit_message_text.call_args[0][0]
-    assert "Back-in-Stock Tracker Active!" in conf_text
-
-    # 2. Test "discount" mode
-    query.data = f"trk_mode:{listing.id}:discount"
-    query.edit_message_text.reset_mock()
-    await callback_query_dispatcher(update, context)
-
-    subs = await repo.get_user_subscriptions(123456)
-    sub, _ = subs[0]
-    assert sub.notify_on_restock is False
-    assert sub.alert_rearmed is True
-    conf_text = query.edit_message_text.call_args[0][0]
-    assert "Significant Discount Tracker Active!" in conf_text
+    assert "Auto-Tracker Activated!" in conf_text
+    assert "Restock Alerts:" in conf_text
+    assert "Discount Alerts:" in conf_text
 
 
 def test_evaluate_alert_separates_restock_and_discount():
@@ -129,7 +110,7 @@ def test_evaluate_alert_separates_restock_and_discount():
         last_available=False,  # Previously Out of Stock!
     )
 
-    sub_stock = Subscription(
+    sub = Subscription(
         id=1,
         telegram_id=123456,
         listing_id=10,
@@ -148,11 +129,11 @@ def test_evaluate_alert_separates_restock_and_discount():
     )
 
     alert = AlertService.evaluate_alert(
-        sub=sub_stock,
+        sub=sub,
         quote=quote_in_stock,
         listing=listing,
     )
-    # Must trigger RESTOCK, not SIGNIFICANT_DROP!
+    # Must trigger RESTOCK!
     assert alert == AlertType.RESTOCK
 
     # 2. Product is already in stock (last_available=True) and price drops significantly
@@ -172,20 +153,11 @@ def test_evaluate_alert_separates_restock_and_discount():
         "count": 10,
     }
 
-    sub_discount = Subscription(
-        id=2,
-        telegram_id=123456,
-        listing_id=10,
-        target_price_paise=35000,  # Unrealistically low target, but significant drop occurs
-        notify_on_restock=True,
-        alert_rearmed=True,
-    )
-
     alert_disc = AlertService.evaluate_alert(
-        sub=sub_discount,
+        sub=sub,
         quote=quote_discount,
         listing=listing_in_stock,
         price_summary_30d=summary_30d,
     )
-    # Must trigger SIGNIFICANT_DROP, not RESTOCK!
+    # Must trigger SIGNIFICANT_DROP!
     assert alert_disc == AlertType.SIGNIFICANT_DROP

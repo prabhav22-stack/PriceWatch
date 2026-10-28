@@ -99,15 +99,13 @@ def format_tracking_mode_confirmation(listing: CanonicalListing, sub: Subscripti
     price_str = format_paise_to_inr(listing.last_price_paise)
     mrp_str = format_paise_to_inr(listing.last_mrp_paise) if listing.last_mrp_paise else None
 
-    if mode == "stock":
-        header = "📦 <b>Back-in-Stock Tracker Active!</b>"
-        rule = "You will receive an instant notification as soon as this item is back in stock!"
-    elif mode == "discount":
-        header = "🔥 <b>Significant Discount Tracker Active!</b>"
-        rule = "PriceWatch 30-day memory will alert you whenever there is a ≥10% price drop or a new 30-day low!"
-    elif mode == "both":
-        header = "⚡ <b>Smart Tracker Active (Stock + Discounts)!</b>"
-        rule = "Alerts enabled for both restocks and significant discounts (≥10% drop or 30-day low)!"
+    if mode in ("auto", "both", "stock", "discount"):
+        header = "⚡ <b>Auto-Tracker Activated!</b>"
+        rule = (
+            "• 📦 <b>Restock Alerts:</b> Notifies you immediately if/when the item is in stock.\n"
+            "• 🔥 <b>Discount Alerts:</b> 30-day price memory alerts you on significant drops (≥10% drop or new 30-day low).\n"
+            "<i>No target price needed—PriceWatch watches both automatically!</i>"
+        )
     else:
         target_str = format_paise_to_inr(sub.target_price_paise)
         header = "🎯 <b>Price Target Set!</b>"
@@ -131,7 +129,7 @@ def format_tracking_mode_confirmation(listing: CanonicalListing, sub: Subscripti
 
     lines.extend([
         "",
-        f"🔔 <b>Tracking Rule:</b> {rule}",
+        f"🔔 <b>Tracking Rule:</b>\n{rule}",
     ])
     return "\n".join(lines)
 

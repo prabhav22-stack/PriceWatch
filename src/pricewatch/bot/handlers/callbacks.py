@@ -94,17 +94,16 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 await query.edit_message_text(preview_text, reply_markup=mode_kb, parse_mode="HTML")
                 return
 
-            # Modes: "stock", "discount", "both"
+            # Combined Auto-Tracker mode (watches both restocks and significant discounts)
             target_paise = listing.last_price_paise or 1
-            notify_restock = mode in ("stock", "both")
             is_in_stock = bool(listing.last_available)
-            alert_rearmed = not is_in_stock if mode == "stock" else True
+            alert_rearmed = not is_in_stock if not is_in_stock else True
 
             sub = Subscription(
                 telegram_id=user_id,
                 listing_id=listing_id,
                 target_price_paise=target_paise,
-                notify_on_restock=notify_restock,
+                notify_on_restock=True,
                 is_active=True,
                 alert_rearmed=alert_rearmed,
                 last_alerted_price_paise=listing.last_price_paise if is_in_stock else None,

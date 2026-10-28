@@ -88,36 +88,18 @@ def build_tracking_mode_keyboard(
     current_price_paise: int,
     is_in_stock: bool = True,
 ) -> InlineKeyboardMarkup:
-    """Intuitive tracking options: Discount only, Restock only, Both, or Target Price."""
-    rows = []
-    if not is_in_stock:
-        rows.append([
-            InlineKeyboardButton("📦 Track When Back in Stock", callback_data=f"trk_mode:{listing_id}:stock"),
-        ])
-        rows.append([
-            InlineKeyboardButton("🔥 Track Significant Discounts", callback_data=f"trk_mode:{listing_id}:discount"),
-        ])
-        rows.append([
-            InlineKeyboardButton("⚡ Track Both (Stock + Discounts)", callback_data=f"trk_mode:{listing_id}:both"),
-        ])
-    else:
-        rows.append([
-            InlineKeyboardButton("🔥 Track Significant Discounts", callback_data=f"trk_mode:{listing_id}:discount"),
-        ])
-        rows.append([
-            InlineKeyboardButton("📦 Track Stock / Restocks", callback_data=f"trk_mode:{listing_id}:stock"),
-        ])
-        rows.append([
-            InlineKeyboardButton("⚡ Track Both (Drops + Restock)", callback_data=f"trk_mode:{listing_id}:both"),
-        ])
-
-    rows.append([
-        InlineKeyboardButton("🎯 Set Custom Target Price", callback_data=f"trk_mode:{listing_id}:target"),
+    """Combined intuitive tracking options: Combined Auto-Tracker (Stock & Discounts) or Custom Target."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⚡ Auto-Track (Stock & Discounts)", callback_data=f"trk_mode:{listing_id}:auto"),
+        ],
+        [
+            InlineKeyboardButton("🎯 Set Custom Target Price", callback_data=f"trk_mode:{listing_id}:target"),
+        ],
+        [
+            InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
+        ],
     ])
-    rows.append([
-        InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
-    ])
-    return InlineKeyboardMarkup(rows)
 
 
 def build_target_price_keyboard(listing_id: int, current_price_paise: int) -> InlineKeyboardMarkup:

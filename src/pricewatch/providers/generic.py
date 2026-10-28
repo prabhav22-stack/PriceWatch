@@ -76,9 +76,49 @@ class GenericProvider(BaseProvider):
                 if not isinstance(item, dict):
                     continue
                 item_type = item.get("@type", "")
-                if item_type in ("Product", "ProductGroup"):
+                types = item_type if isinstance(item_type, list) else [item_type]
+                if any(
+                    t in ("Product", "ProductGroup", "DietarySupplement") or "Product" in str(t)
+                    for t in types
+                ):
                     return item
         return None
+
+    def _extract_next_data(
+        self, parser: LexborHTMLParser
+    ) -> Tuple[Optional[str], Optional[int], Optional[int], bool]:
+        """Extract product details from Next.js __NEXT_DATA__ payload."""
+        script = parser.css_first('script#__NEXT_DATA__')
+        if not script:
+            return None, None, None, True
+        try:
+            data = json.loads(script.text())
+            props = data.get("props", {}).get("pageProps", {})
+
+            # Case 1: HyugaLife (props.product.data.data)
+            hl_prod = props.get("product", {}).get("data", {}).get("data", {})
+            if hl_prod and isinstance(hl_prod, dict):
+                title = hl_prod.get("name") or hl_prod.get("title")
+                price = parse_inr_to_paise(str(hl_prod.get("special_price") or hl_prod.get("price") or 0))
+                mrp = parse_inr_to_paise(str(hl_prod.get("price") or 0))
+                avail = bool(hl_prod.get("stock_status", True))
+                if price:
+                    return title, price, mrp, avail
+
+            # Case 2: Generic pageProps.product or productDetails
+            prod = props.get("product") or props.get("productDetails")
+            if isinstance(prod, dict):
+                title = prod.get("name") or prod.get("title")
+                price = parse_inr_to_paise(
+                    str(prod.get("selling_price") or prod.get("special_price") or prod.get("price") or 0)
+                )
+                mrp = parse_inr_to_paise(str(prod.get("mrp") or prod.get("regular_price") or 0))
+                avail = bool(prod.get("in_stock", prod.get("inStock", prod.get("isAvailable", True))))
+                if price:
+                    return title, price, mrp, avail
+        except Exception:
+            pass
+        return None, None, None, True
 
     def _extract_opengraph(self, parser: LexborHTMLParser) -> Tuple[Optional[str], Optional[int]]:
         """Extract OpenGraph metadata."""
@@ -109,7 +149,14 @@ class GenericProvider(BaseProvider):
 
     async def _parse_page(self, url: str) -> Tuple[str, Optional[int], Optional[int], bool, str]:
         """Parse HTML page returning (title, price_paise, mrp_paise, available, method)."""
-        resp = await http_client.get(url)
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        resp = await http_client.get(url, headers=headers)
         if resp.status_code != 200:
             raise ExtractionError(f"HTTP {resp.status_code} when fetching {url}")
 
@@ -127,17 +174,22 @@ class GenericProvider(BaseProvider):
             raw_price = offers.get("price")
             price_paise = parse_inr_to_paise(raw_price)
             availability_str = str(offers.get("availability", "")).lower()
-            available = "outofstock" not in availability_str
+            available = "outofstock" not in availability_str and "discontinued" not in availability_str
 
             if price_paise:
                 return title, price_paise, None, available, "json_ld"
 
-        # 2. Try OpenGraph
+        # 2. Try Next.js __NEXT_DATA__
+        nd_title, nd_price, nd_mrp, nd_avail = self._extract_next_data(parser)
+        if nd_price:
+            return nd_title or "Tracked Product", nd_price, nd_mrp, nd_avail, "next_data"
+
+        # 3. Try OpenGraph
         og_title, og_price = self._extract_opengraph(parser)
         if og_price:
             return og_title or "Tracked Product", og_price, None, True, "opengraph"
 
-        # 3. Strip noise nodes and try DOM selectors
+        # 4. Strip noise nodes and try DOM selectors
         for tag in _STRIP_SELECTORS:
             for node in parser.css(tag):
                 node.decompose()

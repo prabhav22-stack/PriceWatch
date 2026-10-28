@@ -77,18 +77,6 @@ class AlertService:
         if quote.price_paise >= rearm_threshold and not sub.alert_rearmed:
             return None
 
-        # Scenario 1: Initial drop to target
-        if sub.alert_rearmed and quote.price_paise <= sub.target_price_paise:
-            return AlertType.TARGET_REACHED
-
-        # Scenario 2 & 3: Already alerted, evaluate further drop
-        if not sub.alert_rearmed and sub.last_alerted_price_paise is not None:
-            drop_threshold = int(
-                sub.last_alerted_price_paise * (100 - sub.notify_on_further_drop_pct) / 100
-            )
-            if quote.price_paise <= drop_threshold:
-                return AlertType.FURTHER_DROP
-
         # Significant Price Drop (30-day price memory or previous price drop)
         discount_pct = getattr(settings, "SIGNIFICANT_DISCOUNT_PCT", 10)
         if sub.alert_rearmed:
@@ -108,6 +96,18 @@ class AlertService:
                 drop_threshold = int(listing.last_price_paise * (100 - discount_pct) / 100)
                 if quote.price_paise <= drop_threshold:
                     return AlertType.SIGNIFICANT_DROP
+
+        # Scenario 1: Initial drop to target
+        if sub.alert_rearmed and quote.price_paise <= sub.target_price_paise:
+            return AlertType.TARGET_REACHED
+
+        # Scenario 2 & 3: Already alerted, evaluate further drop
+        if not sub.alert_rearmed and sub.last_alerted_price_paise is not None:
+            drop_threshold = int(
+                sub.last_alerted_price_paise * (100 - sub.notify_on_further_drop_pct) / 100
+            )
+            if quote.price_paise <= drop_threshold:
+                return AlertType.FURTHER_DROP
 
         return None
 

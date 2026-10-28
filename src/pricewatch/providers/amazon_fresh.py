@@ -184,7 +184,16 @@ class AmazonFreshProvider(BaseProvider):
         except Exception as exc:
             pass
 
-        # Graceful fallback: Amazon Fresh items are often hyperlocal / pincode-gated.
+        # Extract readable title from URL slug if available
+        slug_title = None
+        match = re.search(r"amazon\.in/([^/]+)/(?:dp|gp/product)/", url)
+        if match:
+            slug = match.group(1).replace("-", " ").strip()
+            if slug and len(slug) > 3 and not slug.startswith("gp"):
+                slug_title = slug
+        fallback_title = slug_title or f"Amazon Fresh Product ({asin})"
+
+        # Graceful fallback: Amazon items are often bot-gated for simple requests.
         # Onboard the listing into Tier 4 (BROWSER) so the browser worker checks it.
         variant = VariantOption(
             external_variant_id=asin,
@@ -198,7 +207,7 @@ class AmazonFreshProvider(BaseProvider):
             provider_code=self.provider_code,
             provider_tier=self.tier,
             external_product_id=asin,
-            product_title=f"Amazon Fresh Product ({asin})",
+            product_title=fallback_title,
             requires_pincode=bool(pincode),
             variants=[variant],
             pinned_variant_id=asin,
