@@ -129,6 +129,10 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
 
         # 5. Amul Categories Menu
         if data == "amul_menu":
+            try:
+                await query.answer()
+            except Exception:
+                pass
             user = await tracker_service.get_or_register_user(telegram_id=user_id)
             pincode = user.default_pincode or "842002"
             amul_provider = AmulProvider()
@@ -146,13 +150,26 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 (c for c in AMUL_CATEGORIES if c["id"] == cat_id),
                 {"label": cat_id.title(), "emoji": "💪"},
             )
+            try:
+                await query.answer(f"Fetching {cat_info['label']}...")
+            except Exception:
+                pass
 
             user = await tracker_service.get_or_register_user(telegram_id=user_id)
             pincode = user.default_pincode or "842002"
 
+            # Instant visual indicator for snappy UX
+            try:
+                await query.edit_message_text(
+                    f"⏳ <i>Loading live stock for <b>{cat_info['label']}</b> (PIN: {pincode})...</i>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
             amul_provider = AmulProvider()
             substore = await amul_provider.resolve_substore_for_pincode(pincode)
-            # Fetch ALL category products (limit=100) so none are ever missing
+            # Fetch ALL category products (limit=100) with connection pooling and caching
             products = await amul_provider.fetch_category_products(cat_id, pincode=pincode, limit=100)
 
             # Record live stock observations and retrieve history

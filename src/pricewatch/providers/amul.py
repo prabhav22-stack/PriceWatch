@@ -61,11 +61,61 @@ class AmulProvider(BaseProvider):
     provider_code = "amul"
     tier = ProviderTier.API_OR_JSON
 
+    # Shared process-wide session & cache state (drastically accelerates response times)
+    _cls_session_tid: Optional[str] = None
+    _cls_session_created_at: float = 0
+    _cls_pincode_substore_cache: Dict[str, str] = {
+        "842002": "bihar",
+        "800001": "bihar",
+        "110001": "delhi",
+        "122001": "delhi",
+        "201301": "delhi",
+        "400001": "mumbai",
+        "380001": "gujarat",
+        "388001": "gujarat",
+        "560001": "bangalore",
+        "700001": "kolkata",
+        "600001": "chennai",
+        "500001": "hyderabad",
+    }
+    _cls_substore_pref_set: Optional[str] = None
+    _cls_category_cache: Dict[Tuple[str, str], Tuple[float, List[Dict[str, Any]]]] = {}
+    _shared_client: Optional[httpx.AsyncClient] = None
+
     def __init__(self):
-        self._session_tid: Optional[str] = None
         self._cookies: Dict[str, str] = {}
-        self._session_created_at: float = 0
-        self._pincode_substore_cache: Dict[str, str] = {}
+
+    @property
+    def _session_tid(self) -> Optional[str]:
+        return AmulProvider._cls_session_tid
+
+    @_session_tid.setter
+    def _session_tid(self, val: Optional[str]) -> None:
+        AmulProvider._cls_session_tid = val
+
+    @property
+    def _session_created_at(self) -> float:
+        return AmulProvider._cls_session_created_at
+
+    @_session_created_at.setter
+    def _session_created_at(self, val: float) -> None:
+        AmulProvider._cls_session_created_at = val
+
+    @property
+    def _pincode_substore_cache(self) -> Dict[str, str]:
+        return AmulProvider._cls_pincode_substore_cache
+
+    @classmethod
+    async def get_client(cls) -> httpx.AsyncClient:
+        """Get or initialize the shared async HTTP client with connection pooling."""
+        if cls._shared_client is None or cls._shared_client.is_closed:
+            cls._shared_client = httpx.AsyncClient(
+                headers=DEFAULT_HEADERS,
+                follow_redirects=True,
+                timeout=15.0,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=40),
+            )
+        return cls._shared_client
 
     @classmethod
     def can_handle(cls, url: str) -> bool:
@@ -81,18 +131,19 @@ class AmulProvider(BaseProvider):
         sig = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         return f"{timestamp}:{rand}:{sig}"
 
-    async def _ensure_session(self, client: httpx.AsyncClient) -> str:
+    async def _ensure_session(self, client: Optional[httpx.AsyncClient] = None) -> str:
         """Establish valid cookies and StoreHippo session TID."""
         now = time.time()
-        # Sessions expire after ~15 minutes
-        if self._session_tid and (now - self._session_created_at < 600):
-            return self._session_tid
+        # Sessions expire after ~15 minutes (reuse for 10 minutes)
+        if AmulProvider._cls_session_tid and (now - AmulProvider._cls_session_created_at < 600):
+            return AmulProvider._cls_session_tid
 
+        c = client or await self.get_client()
         logger.info("Initializing fresh Amul StoreHippo session...")
         # 1. Acquire cookies
-        r1 = await client.get(f"{SHOP_URL}/en/browse/protein")
+        await c.get(f"{SHOP_URL}/en/browse/protein")
         # 2. Extract TID
-        r2 = await client.get(f"{SHOP_URL}/user/info.js?_v={int(now * 1000)}")
+        r2 = await c.get(f"{SHOP_URL}/user/info.js?_v={int(now * 1000)}")
         match = re.search(r"session\s*=\s*(\{.*?\});", r2.text) or re.search(r"session\s*=\s*(\{.*\})", r2.text)
         if not match:
             raise ExtractionError("Failed to extract session TID from Amul user/info.js")
@@ -102,27 +153,31 @@ class AmulProvider(BaseProvider):
         if not tid:
             raise ExtractionError("Amul session info missing TID")
 
-        self._session_tid = tid
-        self._session_created_at = now
+        AmulProvider._cls_session_tid = tid
+        AmulProvider._cls_session_created_at = now
+        AmulProvider._cls_substore_pref_set = None
         return tid
 
     def invalidate_session(self) -> None:
         """Force session TID refresh on next API request."""
-        self._session_tid = None
-        self._session_created_at = 0
+        AmulProvider._cls_session_tid = None
+        AmulProvider._cls_session_created_at = 0
+        AmulProvider._cls_substore_pref_set = None
+        AmulProvider._cls_category_cache.clear()
 
-    async def get_substore_for_pincode(self, pincode: str, client: httpx.AsyncClient) -> str:
+    async def get_substore_for_pincode(self, pincode: str, client: Optional[httpx.AsyncClient] = None) -> str:
         """Resolve delivery pincode to internal Amul warehouse/substore alias."""
         clean_pin = pincode.strip()
-        if clean_pin in self._pincode_substore_cache:
-            return self._pincode_substore_cache[clean_pin]
+        if clean_pin in AmulProvider._cls_pincode_substore_cache:
+            return AmulProvider._cls_pincode_substore_cache[clean_pin]
 
-        tid = await self._ensure_session(client)
+        c = client or await self.get_client()
+        tid = await self._ensure_session(c)
         tid_hdr = self.calculate_tid_header(tid)
         headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
 
         url = f"{SHOP_URL}/entity/pincode?limit=50&filters[0][field]=pincode&filters[0][value]={clean_pin}&filters[0][operator]=regex&cf_cache=1h"
-        resp = await client.get(url, headers=headers)
+        resp = await c.get(url, headers=headers)
         if resp.status_code != 200:
             logger.warning("Pincode lookup returned non-200", status=resp.status_code, pincode=clean_pin)
             return "delhi"  # sensible fallback
@@ -134,24 +189,29 @@ class AmulProvider(BaseProvider):
             return "delhi"
 
         substore = records[0].get("substore", "delhi")
-        self._pincode_substore_cache[clean_pin] = substore
+        AmulProvider._cls_pincode_substore_cache[clean_pin] = substore
         return substore
 
     async def resolve_substore_for_pincode(self, pincode: str) -> str:
-        """Convenience method to resolve substore for a pincode using an internal HTTP client."""
+        """Convenience method to resolve substore for a pincode using fast cache or client."""
         clean_pin = pincode.strip()
-        if clean_pin in self._pincode_substore_cache:
-            return self._pincode_substore_cache[clean_pin]
-        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True, timeout=15.0) as client:
-            return await self.get_substore_for_pincode(clean_pin, client)
+        if clean_pin in AmulProvider._cls_pincode_substore_cache:
+            return AmulProvider._cls_pincode_substore_cache[clean_pin]
+        client = await self.get_client()
+        return await self.get_substore_for_pincode(clean_pin, client)
 
-    async def set_substore_preference(self, substore: str, client: httpx.AsyncClient) -> None:
+    async def set_substore_preference(self, substore: str, client: Optional[httpx.AsyncClient] = None) -> None:
         """Notify StoreHippo session of active delivery substore."""
-        tid = await self._ensure_session(client)
+        if AmulProvider._cls_substore_pref_set == substore and AmulProvider._cls_session_tid:
+            return  # Already set on active session
+
+        c = client or await self.get_client()
+        tid = await self._ensure_session(c)
         tid_hdr = self.calculate_tid_header(tid)
         headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
         pref_url = f"{SHOP_URL}/entity/ms.settings/_/setPreferences"
-        await client.put(pref_url, json={"data": {"store": substore}}, headers=headers)
+        await c.put(pref_url, json={"data": {"store": substore}}, headers=headers)
+        AmulProvider._cls_substore_pref_set = substore
 
     @staticmethod
     def calculate_effective_inventory(item: Dict[str, Any]) -> Tuple[bool, int]:
@@ -200,77 +260,88 @@ class AmulProvider(BaseProvider):
         self, category_id: str = "protein", pincode: str = "110001", limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Fetch all products in an Amul category with live inventory for a pincode."""
-        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True, timeout=15.0) as client:
-            substore = await self.get_substore_for_pincode(pincode, client)
-            await self.set_substore_preference(substore, client)
+        clean_pin = pincode.strip() or "110001"
+        cache_key = (category_id, clean_pin)
+        now = time.time()
+        cached = AmulProvider._cls_category_cache.get(cache_key)
+        if cached and (now - cached[0] < 30.0):
+            return cached[1]
 
+        client = await self.get_client()
+        substore = await self.get_substore_for_pincode(clean_pin, client)
+        await self.set_substore_preference(substore, client)
+
+        tid = await self._ensure_session(client)
+        tid_hdr = self.calculate_tid_header(tid)
+        headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
+
+        query = (
+            f"filters[0][field]=categories&filters[0][value][0]={category_id}&filters[0][operator]=in"
+            f"&filters[0][original]=1&limit={limit}&start=0&v=6"
+        )
+        url = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
+        resp = await client.get(url, headers=headers)
+        if resp.status_code in (401, 403):
+            logger.warning("Amul session expired (HTTP 401/403), re-establishing session...", status=resp.status_code)
+            self.invalidate_session()
             tid = await self._ensure_session(client)
-            tid_hdr = self.calculate_tid_header(tid)
-            headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
-
-            query = (
-                f"filters[0][field]=categories&filters[0][value][0]={category_id}&filters[0][operator]=in"
-                f"&filters[0][original]=1&limit={limit}&start=0&v=6"
-            )
-            url = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
+            headers = {**DEFAULT_HEADERS, "tid": self.calculate_tid_header(tid)}
             resp = await client.get(url, headers=headers)
-            if resp.status_code in (401, 403):
-                logger.warning("Amul session expired (HTTP 401/403), re-establishing session...", status=resp.status_code)
-                self.invalidate_session()
-                tid = await self._ensure_session(client)
-                headers = {**DEFAULT_HEADERS, "tid": self.calculate_tid_header(tid)}
-                resp = await client.get(url, headers=headers)
 
-            if resp.status_code != 200:
-                raise ExtractionError(f"HTTP {resp.status_code} fetching Amul category {category_id}")
+        if resp.status_code != 200:
+            raise ExtractionError(f"HTTP {resp.status_code} fetching Amul category {category_id}")
 
-            data = resp.json()
-            items = data.get("data", [])
-            results = []
-            for item in items:
-                is_avail, eff_qty = self.calculate_effective_inventory(item)
-                images = item.get("images", [])
-                image_url = None
-                if images and isinstance(images, list) and isinstance(images[0], str):
-                    image_url = f"https://shop.amul.com{images[0]}" if not images[0].startswith("http") else images[0]
+        data = resp.json()
+        items = data.get("data", [])
+        results = []
+        for item in items:
+            is_avail, eff_qty = self.calculate_effective_inventory(item)
+            images = item.get("images", [])
+            image_url = None
+            if images and isinstance(images, list) and isinstance(images[0], str):
+                image_url = f"https://shop.amul.com{images[0]}" if not images[0].startswith("http") else images[0]
 
-                alias = item.get("alias", "")
-                clean_alias = alias.replace(" ", "") if alias else (item.get("sku") or "")
-                prod_url = f"{SHOP_URL}/en/product/{clean_alias}" if clean_alias else SHOP_URL
+            alias = item.get("alias", "")
+            clean_alias = alias.replace(" ", "") if alias else (item.get("sku") or "")
+            prod_url = f"{SHOP_URL}/en/product/{clean_alias}" if clean_alias else SHOP_URL
 
-                results.append({
-                    "sku": item.get("sku"),
-                    "name": item.get("name"),
-                    "alias": alias,
-                    "url": prod_url,
-                    "price_paise": parse_inr_to_paise(str(item.get("price", "0"))),
-                    "mrp_paise": parse_inr_to_paise(str(item.get("compare_price", "0"))),
-                    "available": is_avail,
-                    "inventory_quantity": eff_qty,
-                    "image_url": image_url,
-                    "substore": substore,
-                    "protein": self.extract_protein_info(item),
-                    "metafields": item.get("metafields"),
-                })
-            return results
+            results.append({
+                "sku": item.get("sku"),
+                "name": item.get("name"),
+                "alias": alias,
+                "url": prod_url,
+                "price_paise": parse_inr_to_paise(str(item.get("price", "0"))),
+                "mrp_paise": parse_inr_to_paise(str(item.get("compare_price", "0"))),
+                "available": is_avail,
+                "inventory_quantity": eff_qty,
+                "image_url": image_url,
+                "substore": substore,
+                "protein": self.extract_protein_info(item),
+                "metafields": item.get("metafields"),
+            })
+        AmulProvider._cls_category_cache[cache_key] = (now, results)
+        return results
 
     async def search_products(
         self, query: str, pincode: str = "842002", categories: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Search products across categories matching a keyword or fuzzy string."""
         cats = categories or ["protein", "dairy", "chocolates", "bakery"]
+        results = await asyncio.gather(
+            *[self.fetch_category_products(cat, pincode=pincode, limit=100) for cat in cats],
+            return_exceptions=True,
+        )
         all_products: List[Dict[str, Any]] = []
         seen_skus = set()
-        for cat in cats:
-            try:
-                cat_prods = await self.fetch_category_products(cat, pincode=pincode, limit=100)
-                for p in cat_prods:
-                    sku = p.get("sku")
-                    if sku and sku not in seen_skus:
-                        seen_skus.add(sku)
-                        all_products.append(p)
-            except Exception as e:
-                logger.warning("Error fetching category for search", cat=cat, error=str(e))
+        for cat, cat_res in zip(cats, results):
+            if isinstance(cat_res, Exception):
+                logger.warning("Error fetching category for search", cat=cat, error=str(cat_res))
+                continue
+            for p in cat_res:
+                sku = p.get("sku")
+                if sku and sku not in seen_skus:
+                    seen_skus.add(sku)
+                    all_products.append(p)
 
         clean_query = query.strip()
         if not clean_query:
@@ -295,58 +366,58 @@ class AmulProvider(BaseProvider):
         alias = parts[-1] if parts else ""
 
         # Fetch matching product from StoreHippo
-        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True, timeout=15.0) as client:
-            substore = await self.get_substore_for_pincode(effective_pin, client)
-            await self.set_substore_preference(substore, client)
+        client = await self.get_client()
+        substore = await self.get_substore_for_pincode(effective_pin, client)
+        await self.set_substore_preference(substore, client)
 
-            tid = await self._ensure_session(client)
-            tid_hdr = self.calculate_tid_header(tid)
-            headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
+        tid = await self._ensure_session(client)
+        tid_hdr = self.calculate_tid_header(tid)
+        headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
 
-            query = (
-                f"filters[0][field]=alias&filters[0][value]={alias}&filters[0][operator]=equal"
-                "&fields[name]=1&fields[sku]=1&fields[price]=1&fields[compare_price]=1"
-                "&fields[available]=1&fields[inventory_quantity]=1&fields[inventory_low_stock_quantity]=1"
-                "&fields[inventory_allow_out_of_stock]=1&limit=1"
-            )
-            url_api = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
-            resp = await client.get(url_api, headers=headers)
-            items = resp.json().get("data", []) if resp.status_code == 200 else []
+        query = (
+            f"filters[0][field]=alias&filters[0][value]={alias}&filters[0][operator]=equal"
+            "&fields[name]=1&fields[sku]=1&fields[price]=1&fields[compare_price]=1"
+            "&fields[available]=1&fields[inventory_quantity]=1&fields[inventory_low_stock_quantity]=1"
+            "&fields[inventory_allow_out_of_stock]=1&limit=1"
+        )
+        url_api = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
+        resp = await client.get(url_api, headers=headers)
+        items = resp.json().get("data", []) if resp.status_code == 200 else []
 
-            if not items:
-                # If alias lookup fails, create clean generic option with SKU/alias
-                product_title = alias.replace("-", " ").title()
-                sku = alias
-                price_paise = None
-                available = False
-                eff_qty = 0
-            else:
-                it = items[0]
-                product_title = it.get("name", alias.title())
-                sku = it.get("sku", alias)
-                price_paise = parse_inr_to_paise(str(it.get("price", "0")))
-                available, eff_qty = self.calculate_effective_inventory(it)
+        if not items:
+            # If alias lookup fails, create clean generic option with SKU/alias
+            product_title = alias.replace("-", " ").title()
+            sku = alias
+            price_paise = None
+            available = False
+            eff_qty = 0
+        else:
+            it = items[0]
+            product_title = it.get("name", alias.title())
+            sku = it.get("sku", alias)
+            price_paise = parse_inr_to_paise(str(it.get("price", "0")))
+            available, eff_qty = self.calculate_effective_inventory(it)
 
-            clean_alias = alias.replace(" ", "") if alias else sku
-            canonical_url = f"{SHOP_URL}/en/product/{clean_alias}" if clean_alias else SHOP_URL
-            variant = VariantOption(
-                external_variant_id=sku,
-                variant_title="Standard Pack",
-                canonical_url=canonical_url,
-                price_paise=price_paise,
-                available=available,
-                inventory_quantity=eff_qty,
-            )
+        clean_alias = alias.replace(" ", "") if alias else sku
+        canonical_url = f"{SHOP_URL}/en/product/{clean_alias}" if clean_alias else SHOP_URL
+        variant = VariantOption(
+            external_variant_id=sku,
+            variant_title="Standard Pack",
+            canonical_url=canonical_url,
+            price_paise=price_paise,
+            available=available,
+            inventory_quantity=eff_qty,
+        )
 
-            return ResolutionResult(
-                provider_code=self.provider_code,
-                provider_tier=self.tier,
-                external_product_id=sku,
-                product_title=product_title,
-                requires_pincode=True,
-                variants=[variant],
-                pinned_variant_id=sku,
-            )
+        return ResolutionResult(
+            provider_code=self.provider_code,
+            provider_tier=self.tier,
+            external_product_id=sku,
+            product_title=product_title,
+            requires_pincode=True,
+            variants=[variant],
+            pinned_variant_id=sku,
+        )
 
     async def fetch_quote(
         self,
@@ -359,57 +430,57 @@ class AmulProvider(BaseProvider):
         effective_pin = pincode or "110001"
         sku = external_variant_id or external_product_id
 
-        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True, timeout=15.0) as client:
-            substore = await self.get_substore_for_pincode(effective_pin, client)
-            await self.set_substore_preference(substore, client)
+        client = await self.get_client()
+        substore = await self.get_substore_for_pincode(effective_pin, client)
+        await self.set_substore_preference(substore, client)
 
+        tid = await self._ensure_session(client)
+        tid_hdr = self.calculate_tid_header(tid)
+        headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
+
+        # Query within protein category with v=6 first to trigger StoreHippo regional substore computation
+        query = (
+            "filters[0][field]=categories&filters[0][value][0]=protein&filters[0][operator]=in&filters[0][original]=1"
+            f"&filters[1][field]=sku&filters[1][value]={sku}&filters[1][operator]=equal&v=6"
+        )
+        url_api = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
+        resp = await client.get(url_api, headers=headers)
+        if resp.status_code in (401, 403):
+            logger.warning("Amul quote session expired (HTTP 401/403), re-establishing...", status=resp.status_code)
+            self.invalidate_session()
             tid = await self._ensure_session(client)
-            tid_hdr = self.calculate_tid_header(tid)
-            headers = {**DEFAULT_HEADERS, "tid": tid_hdr}
-
-            # Query within protein category with v=6 first to trigger StoreHippo regional substore computation
-            query = (
-                "filters[0][field]=categories&filters[0][value][0]=protein&filters[0][operator]=in&filters[0][original]=1"
-                f"&filters[1][field]=sku&filters[1][value]={sku}&filters[1][operator]=equal&v=6"
-            )
-            url_api = f"{SHOP_URL}/api/1/entity/ms.products?{query}"
+            headers = {**DEFAULT_HEADERS, "tid": self.calculate_tid_header(tid)}
             resp = await client.get(url_api, headers=headers)
-            if resp.status_code in (401, 403):
-                logger.warning("Amul quote session expired (HTTP 401/403), re-establishing...", status=resp.status_code)
-                self.invalidate_session()
-                tid = await self._ensure_session(client)
-                headers = {**DEFAULT_HEADERS, "tid": self.calculate_tid_header(tid)}
-                resp = await client.get(url_api, headers=headers)
 
-            if resp.status_code != 200:
-                raise ExtractionError(f"HTTP {resp.status_code} fetching Amul SKU {sku}")
+        if resp.status_code != 200:
+            raise ExtractionError(f"HTTP {resp.status_code} fetching Amul SKU {sku}")
 
-            data = resp.json()
-            items = data.get("data", [])
-            # If not found in protein category, fallback to SKU query with v=6
-            if not items:
-                fallback_query = f"filters[0][field]=sku&filters[0][value]={sku}&filters[0][operator]=equal&v=6"
-                resp = await client.get(f"{SHOP_URL}/api/1/entity/ms.products?{fallback_query}", headers=headers)
-                if resp.status_code == 200:
-                    items = resp.json().get("data", [])
+        data = resp.json()
+        items = data.get("data", [])
+        # If not found in protein category, fallback to SKU query with v=6
+        if not items:
+            fallback_query = f"filters[0][field]=sku&filters[0][value]={sku}&filters[0][operator]=equal&v=6"
+            resp = await client.get(f"{SHOP_URL}/api/1/entity/ms.products?{fallback_query}", headers=headers)
+            if resp.status_code == 200:
+                items = resp.json().get("data", [])
 
-            if not items:
-                raise ExtractionError(f"Amul SKU {sku} not found for substore {substore}")
+        if not items:
+            raise ExtractionError(f"Amul SKU {sku} not found for substore {substore}")
 
-            item = items[0]
-            is_avail, eff_qty = self.calculate_effective_inventory(item)
-            price_paise = parse_inr_to_paise(str(item.get("price", "0")))
-            mrp_paise = parse_inr_to_paise(str(item.get("compare_price", "0")))
+        item = items[0]
+        is_avail, eff_qty = self.calculate_effective_inventory(item)
+        price_paise = parse_inr_to_paise(str(item.get("price", "0")))
+        mrp_paise = parse_inr_to_paise(str(item.get("compare_price", "0")))
 
-            return PriceQuote(
-                external_product_id=external_product_id,
-                external_variant_id=external_variant_id,
-                price_paise=price_paise,
-                mrp_paise=mrp_paise,
-                currency="INR",
-                available=is_avail,
-                inventory_quantity=eff_qty,
-                verified_pincode=effective_pin,
-                extraction_method="amul_storehippo_api",
-                raw_variant_title=item.get("name", "Standard"),
-            )
+        return PriceQuote(
+            external_product_id=external_product_id,
+            external_variant_id=external_variant_id,
+            price_paise=price_paise,
+            mrp_paise=mrp_paise,
+            currency="INR",
+            available=is_avail,
+            inventory_quantity=eff_qty,
+            verified_pincode=effective_pin,
+            extraction_method="amul_storehippo_api",
+            raw_variant_title=item.get("name", "Standard"),
+        )

@@ -6,8 +6,9 @@ Replicates the ProductStockHistory tracking logic from upstream amul-notify:
 - last_seen_out_of_stock_at: Set when product transitions from In-Stock to OOS
 """
 
+import asyncio
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pricewatch.config import Settings
 from pricewatch.logging_setup import get_logger
@@ -45,6 +46,7 @@ class AmulStockTracker:
 
     def __init__(self, supabase_client: Optional[Any] = None):
         self._cache: Dict[Tuple[str, str], AmulStockHistoryItem] = {}
+        self._substores_loaded: Set[str] = set()
         self._client = supabase_client
         if not self._client:
             settings = Settings()
@@ -70,12 +72,12 @@ class AmulStockTracker:
         return self._cache.get(key)
 
     async def load_history_for_substore(self, substore: str) -> None:
-        """Prefetch all stock history records for a substore from Supabase."""
-        if not self._client:
+        """Prefetch all stock history records for a substore from Supabase with caching."""
+        if not self._client or substore in self._substores_loaded:
             return
         try:
-            res = (
-                self._client.table("amul_stock_history")
+            res = await asyncio.to_thread(
+                lambda: self._client.table("amul_stock_history")
                 .select("sku, substore, last_seen_in_stock_at, first_seen_in_stock_at, last_seen_out_of_stock_at")
                 .eq("substore", substore)
                 .execute()
@@ -92,6 +94,7 @@ class AmulStockTracker:
                     first_seen_in_stock_at=first_in,
                     last_seen_out_of_stock_at=last_out,
                 )
+            self._substores_loaded.add(substore)
         except Exception as exc:
             logger.warning("Failed to prefetch Amul stock history from Supabase", error=str(exc))
 
