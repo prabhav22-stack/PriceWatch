@@ -118,8 +118,26 @@ def build_listing_card_keyboard(listing_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def build_amul_category_keyboard() -> InlineKeyboardMarkup:
-    """Categories menu for Amul Shop stock browser."""
+def build_welcome_keyboard() -> InlineKeyboardMarkup:
+    """Home dashboard quick navigation buttons for /start."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🥛 Browse Amul Products", callback_data="amul_menu"),
+            InlineKeyboardButton("⭐ Favourites", callback_data="nav:favs"),
+        ],
+        [
+            InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"),
+            InlineKeyboardButton("⚙️ Alert Settings", callback_data="cfg:refresh"),
+        ],
+        [
+            InlineKeyboardButton("🔍 Quick Search", callback_data="nav:search"),
+            InlineKeyboardButton("📍 Delivery Pincode", callback_data="nav:pincode"),
+        ],
+    ])
+
+
+def build_amul_category_keyboard(pincode: str = "842002") -> InlineKeyboardMarkup:
+    """Categories menu for Amul Shop stock browser with intuitive action shortcuts."""
     from pricewatch.providers.amul import AMUL_CATEGORIES
     buttons: List[InlineKeyboardButton] = [
         InlineKeyboardButton(f"{c['emoji']} {c['label']}", callback_data=f"amul_cat:{c['id']}")
@@ -127,7 +145,114 @@ def build_amul_category_keyboard() -> InlineKeyboardMarkup:
     ]
     # 2 columns layout
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([
+        InlineKeyboardButton("⭐ My Favourites", callback_data="nav:favs"),
+        InlineKeyboardButton("🔍 Search Amul", callback_data="nav:search"),
+    ])
+    rows.append([
+        InlineKeyboardButton(f"📍 PIN: {pincode}", callback_data="nav:pincode"),
+        InlineKeyboardButton("⚙️ Alert Settings", callback_data="cfg:refresh"),
+    ])
     return InlineKeyboardMarkup(rows)
+
+
+def build_category_navigation_keyboard(category_id: str = "protein") -> InlineKeyboardMarkup:
+    """Bottom navigation bar placed on the final category message chunk."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⬅️ Back to Categories", callback_data="amul_menu"),
+            InlineKeyboardButton("⭐ My Favourites", callback_data="nav:favs"),
+        ],
+        [
+            InlineKeyboardButton("🔍 Quick Search", callback_data="nav:search"),
+            InlineKeyboardButton("⚙️ Alert Settings", callback_data="cfg:refresh"),
+        ],
+    ])
+
+
+def build_pincode_keyboard(current_pin: str = "842002") -> InlineKeyboardMarkup:
+    """Interactive delivery hub switcher for top warehouse regions."""
+    hubs = [
+        ("842002", "Muzaffarpur"),
+        ("800001", "Patna"),
+        ("110001", "Delhi"),
+        ("400001", "Mumbai"),
+        ("560001", "Bangalore"),
+        ("700001", "Kolkata"),
+    ]
+    buttons = []
+    for pin, city in hubs:
+        active = "✅ " if pin == current_pin else ""
+        buttons.append(InlineKeyboardButton(f"{active}📍 {city} ({pin})", callback_data=f"set_pin:{pin}"))
+
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([
+        InlineKeyboardButton(f"🥛 Browse Products for {current_pin}", callback_data="amul_menu"),
+    ])
+    rows.append([
+        InlineKeyboardButton("⬅️ Back to Menu", callback_data="amul_menu"),
+        InlineKeyboardButton("⚙️ Settings", callback_data="cfg:refresh"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_repeat_keyboard(current_count: int = 0) -> InlineKeyboardMarkup:
+    """Interactive keypad for configuring repeated stock alerts."""
+    btn_1 = "✅ 1 Alert" if current_count == 1 else "1 Alert"
+    btn_2 = "✅ 2 Alerts" if current_count == 2 else "2 Alerts"
+    btn_3 = "✅ 3 Alerts" if current_count == 3 else "3 Alerts"
+    btn_5 = "✅ 5 Alerts" if current_count == 5 else "5 Alerts"
+    btn_10 = "✅ 10 Alerts" if current_count == 10 else "10 Alerts"
+    btn_0 = "✅ ♾️ Until OOS" if current_count == 0 else "♾️ Until OOS"
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(btn_1, callback_data="cfg:repeat:1"),
+            InlineKeyboardButton(btn_2, callback_data="cfg:repeat:2"),
+            InlineKeyboardButton(btn_3, callback_data="cfg:repeat:3"),
+        ],
+        [
+            InlineKeyboardButton(btn_5, callback_data="cfg:repeat:5"),
+            InlineKeyboardButton(btn_10, callback_data="cfg:repeat:10"),
+            InlineKeyboardButton(btn_0, callback_data="cfg:repeat:0"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Full Settings", callback_data="cfg:refresh"),
+            InlineKeyboardButton("🥛 Browse Amul", callback_data="amul_menu"),
+        ],
+    ])
+
+
+def build_search_suggestions_keyboard() -> InlineKeyboardMarkup:
+    """1-click popular search keywords for instant Amul product lookups."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🫐 Blueberry Lassi", callback_data="quick_search:blueberry"),
+            InlineKeyboardButton("🥛 High Protein Lassi", callback_data="quick_search:lassi"),
+        ],
+        [
+            InlineKeyboardButton("💪 Whey Protein", callback_data="quick_search:whey"),
+            InlineKeyboardButton("🍫 Chocolate Milkshake", callback_data="quick_search:chocolate"),
+        ],
+        [
+            InlineKeyboardButton("☕ Coffee Protein", callback_data="quick_search:coffee"),
+            InlineKeyboardButton("🍪 Protein Cookies", callback_data="quick_search:cookies"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Back to Categories", callback_data="amul_menu"),
+            InlineKeyboardButton("⭐ Favourites", callback_data="nav:favs"),
+        ],
+    ])
+
+
+def build_action_nav_keyboard(
+    btn1_text: str, btn1_cb: str, btn2_text: Optional[str] = None, btn2_cb: Optional[str] = None
+) -> InlineKeyboardMarkup:
+    """Generic 1-2 button navigation bar for confirmation/action messages."""
+    row = [InlineKeyboardButton(btn1_text, callback_data=btn1_cb)]
+    if btn2_text and btn2_cb:
+        row.append(InlineKeyboardButton(btn2_text, callback_data=btn2_cb))
+    return InlineKeyboardMarkup([row])
 
 
 def build_amul_product_stock_keyboard(

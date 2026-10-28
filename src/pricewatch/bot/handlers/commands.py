@@ -20,11 +20,17 @@ from pricewatch.bot.formatters import (
     format_welcome_message,
 )
 from pricewatch.bot.keyboards import (
+    build_action_nav_keyboard,
     build_amul_category_keyboard,
+    build_category_navigation_keyboard,
     build_listing_card_keyboard,
+    build_pincode_keyboard,
+    build_repeat_keyboard,
+    build_search_suggestions_keyboard,
     build_settings_keyboard,
     build_target_price_keyboard,
     build_variant_selection_keyboard,
+    build_welcome_keyboard,
 )
 from pricewatch.domain.exceptions import VariantAmbiguousError
 from pricewatch.domain.models import CanonicalListing, Subscription
@@ -77,15 +83,18 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 pass
 
             added = await tracker_service.toggle_user_favourite(user.id, sku)
+            kb = build_action_nav_keyboard("⭐ View Favourites", "nav:favs", "🥛 Browse More", "amul_menu")
             if added:
                 await update.effective_chat.send_message(
                     f"⭐ <b>Added to favourites:</b> {prod_name}\n\n"
                     "View all your starred products anytime with <code>/favourites</code>.",
+                    reply_markup=kb,
                     parse_mode="HTML",
                 )
             else:
                 await update.effective_chat.send_message(
                     f"🗑️ <b>Removed from favourites:</b> {prod_name}",
+                    reply_markup=kb,
                     parse_mode="HTML",
                 )
             return
@@ -120,8 +129,10 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 pass
 
             if match:
+                kb = build_action_nav_keyboard("📋 View Tracked", "nav:tracked", "🥛 Browse More", "amul_menu")
                 await update.effective_chat.send_message(
                     f"✅ You are already tracking the product: <b>{product_title}</b>",
+                    reply_markup=kb,
                     parse_mode="HTML",
                 )
                 return
@@ -155,9 +166,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     last_alerted_price_paise=quote.price_paise if is_in_stock else None,
                 )
             )
+            kb = build_action_nav_keyboard("📋 View Tracked Products", "nav:tracked", "🥛 Browse More", "amul_menu")
             await update.effective_chat.send_message(
                 f"🔍 <b>Tracking product: {product_title}</b>\n"
                 f"You will receive updates when the product is available.",
+                reply_markup=kb,
                 parse_mode="HTML",
             )
             return
@@ -171,9 +184,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             if match:
                 prod_name = match[1].product_title
                 await tracker_service.untrack_product(user.id, match[1].id)
+                kb = build_action_nav_keyboard("📋 View Tracked Products", "nav:tracked", "🥛 Browse Products", "amul_menu")
                 await update.effective_chat.send_message(
                     f"🔍 <b>Untracking product: {prod_name}</b>\n"
                     f"You will no longer receive updates for this product.",
+                    reply_markup=kb,
                     parse_mode="HTML",
                 )
             else:
@@ -186,14 +201,16 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         prod_name = m["name"]
                 except Exception:
                     pass
+                kb = build_action_nav_keyboard("📋 View Tracked", "nav:tracked", "🥛 Browse Products", "amul_menu")
                 await update.effective_chat.send_message(
                     f"❌ You are not tracking the product: <b>{prod_name}</b>",
+                    reply_markup=kb,
                     parse_mode="HTML",
                 )
             return
 
     text = format_welcome_message(user.first_name or "there")
-    await update.effective_message.reply_html(text)
+    await update.effective_message.reply_html(text, reply_markup=build_welcome_keyboard())
 
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -273,14 +290,19 @@ async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /list command."""
+    """Handle /list or /tracked command."""
     if not update.effective_user or not update.effective_message:
         return
 
     tracker_service: TrackerService = context.bot_data["tracker_service"]
     items = await tracker_service.list_user_subscriptions(update.effective_user.id)
     text = format_subscription_list(items)
-    await update.effective_message.reply_html(text)
+    kb = (
+        build_action_nav_keyboard("🥛 Browse Products", "amul_menu", "⭐ Favourites", "nav:favs")
+        if not items
+        else build_action_nav_keyboard("🥛 Add More Products", "amul_menu", "⚙️ Alert Settings", "cfg:refresh")
+    )
+    await update.effective_message.reply_html(text, reply_markup=kb)
 
 
 async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -359,18 +381,22 @@ async def pincode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await tracker_service.set_user_pincode(update.effective_user.id, new_pin)
         amul_provider = AmulProvider()
         substore = await amul_provider.resolve_substore_for_pincode(new_pin)
+        kb = build_pincode_keyboard(new_pin)
         await update.effective_message.reply_html(
-            f"📍 <b>Default delivery pincode updated to:</b> <code>{new_pin}</code> (Warehouse: <i>{substore}</i>)"
+            f"📍 <b>Default delivery pincode updated to:</b> <code>{new_pin}</code> (Warehouse: <i>{substore}</i>)",
+            reply_markup=kb,
         )
         return
 
     curr_pin = user.default_pincode or "842002"
     amul_provider = AmulProvider()
     substore = await amul_provider.resolve_substore_for_pincode(curr_pin)
+    kb = build_pincode_keyboard(curr_pin)
     await update.effective_message.reply_html(
         f"📍 Your current pincode is: <b>{curr_pin} ({substore})</b>\n\n"
-        "To change your pincode, use the command <b>/setpincode</b> followed by your new pincode.\n"
-        "Example: <code>/setpincode 842002</code>"
+        "Tap a quick warehouse hub below or send <code>/setpincode &lt;6-digit&gt;</code>:\n"
+        "Example: <code>/setpincode 842002</code>",
+        reply_markup=kb,
     )
 
 
@@ -386,10 +412,12 @@ async def setpincode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         curr_pin = user.default_pincode or "842002"
         amul_provider = AmulProvider()
         substore = await amul_provider.resolve_substore_for_pincode(curr_pin)
+        kb = build_pincode_keyboard(curr_pin)
         await update.effective_message.reply_html(
             f"📍 <b>Current Delivery Pincode:</b> <code>{curr_pin}</code> (Warehouse: <i>{substore}</i>)\n\n"
-            "To set a new pincode, send: <code>/setpincode &lt;6-digit pincode&gt;</code>\n"
-            "<b>Example:</b> <code>/setpincode 842002</code>"
+            "Tap a quick warehouse hub below or send <code>/setpincode &lt;6-digit pincode&gt;</code>:\n"
+            "<b>Example:</b> <code>/setpincode 842002</code>",
+            reply_markup=kb,
         )
         return
 
@@ -397,8 +425,10 @@ async def setpincode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await tracker_service.set_user_pincode(update.effective_user.id, new_pin)
     amul_provider = AmulProvider()
     substore = await amul_provider.resolve_substore_for_pincode(new_pin)
+    kb = build_pincode_keyboard(new_pin)
     await update.effective_message.reply_html(
-        f"📍 <b>Default delivery pincode updated to:</b> <code>{new_pin}</code> (Warehouse: <i>{substore}</i>)"
+        f"📍 <b>Default delivery pincode updated to:</b> <code>{new_pin}</code> (Warehouse: <i>{substore}</i>)",
+        reply_markup=kb,
     )
 
 
@@ -468,7 +498,7 @@ async def amul_command_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     substore = await amul_provider.resolve_substore_for_pincode(pincode)
 
     text = format_amul_category_menu(pincode=pincode, substore=substore)
-    kb = build_amul_category_keyboard()
+    kb = build_amul_category_keyboard(pincode=pincode)
     await update.effective_message.reply_html(text, reply_markup=kb)
 
 
@@ -479,12 +509,11 @@ async def search_command_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     query = " ".join(context.args).strip() if context.args else ""
     if not query:
+        kb = build_search_suggestions_keyboard()
         await update.effective_message.reply_html(
             "🔍 <b>Usage:</b> <code>/search &lt;keyword&gt;</code>\n\n"
-            "<b>Examples:</b>\n"
-            "• <code>/search blueberry</code>\n"
-            "• <code>/search lassi</code>\n"
-            "• <code>/search whey</code>"
+            "Tap any quick keyword below or type your search:",
+            reply_markup=kb,
         )
         return
 
@@ -530,8 +559,10 @@ async def search_command_handler(update: Update, context: ContextTypes.DEFAULT_T
     )
 
     await wait_msg.delete()
-    for chunk in messages:
-        await update.effective_message.reply_html(chunk, disable_web_page_preview=True)
+    for i, chunk in enumerate(messages):
+        is_last = (i == len(messages) - 1)
+        kb = build_action_nav_keyboard("⬅️ Back to Categories", "amul_menu", "⭐ Favourites", "nav:favs") if is_last else None
+        await update.effective_message.reply_html(chunk, reply_markup=kb, disable_web_page_preview=True)
 
 
 async def favourites_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -549,9 +580,11 @@ async def favourites_command_handler(update: Update, context: ContextTypes.DEFAU
     pincode = user.default_pincode or "842002"
 
     if not fav_skus:
+        kb = build_action_nav_keyboard("🥛 Browse Protein", "amul_cat:protein", "🔍 Search", "nav:search")
         await update.effective_message.reply_html(
             "⭐ <b>You have no favourites yet.</b>\n\n"
-            "Browse products with <code>/amul</code> or search with <code>/search</code> and tap <b>[Favourite]</b> on any item to save it here!"
+            "Browse products with <code>/products</code> or search with <code>/search</code> and tap <b>[Favourite]</b> on any item to save it here!",
+            reply_markup=kb,
         )
         return
 
@@ -589,8 +622,10 @@ async def favourites_command_handler(update: Update, context: ContextTypes.DEFAU
     )
 
     await wait_msg.delete()
-    for chunk in messages:
-        await update.effective_message.reply_html(chunk, disable_web_page_preview=True)
+    for i, chunk in enumerate(messages):
+        is_last = (i == len(messages) - 1)
+        kb = build_action_nav_keyboard("🥛 Browse All Products", "amul_menu", "⚙️ Alert Settings", "cfg:refresh") if is_last else None
+        await update.effective_message.reply_html(chunk, reply_markup=kb, disable_web_page_preview=True)
 
 
 async def analytics_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -708,13 +743,14 @@ async def repeat_command_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     if not args:
         cur_str = "♾️ Until Stock Runs Out" if user.max_notify_count == 0 else f"{user.max_notify_count} dynamic alerts"
+        kb = build_repeat_keyboard(user.max_notify_count)
         await update.effective_message.reply_html(
             "🔁 <b>Repeated Stock Alerts Configuration</b>\n\n"
             f"• Current setting: <b>{cur_str}</b>\n\n"
-            "<b>Usage:</b>\n"
-            "• <code>/repeat 1</code> to <code>/repeat 10</code> - Receive up to N dynamic updates as stock decreases.\n"
-            "• <code>/repeat 0</code> or <code>/repeat oos</code> - Continuous updates every time stock drops until sold out.\n\n"
-            "💡 You can also use the interactive buttons in <code>/settings</code>."
+            "<b>Tap a quick option below</b> or send <code>/repeat &lt;1-10 or 0&gt;</code>:\n"
+            "• <code>/repeat 1</code> to <code>10</code> - Receive up to N dynamic updates as stock decreases.\n"
+            "• <code>/repeat 0</code> (or <code>oos</code>) - Continuous alerts until sold out.",
+            reply_markup=kb,
         )
         return
 

@@ -304,8 +304,15 @@ def format_amul_category_messages(
 ) -> List[str]:
     """
     Build clean chunked messages containing ALL products in the category without missing any.
+    Includes quick inventory summary at top and stock status indicators.
     """
-    title = f"<b>Amul {category_emoji} {category_label} Products</b> ({pincode} - {substore})"
+    in_stock_count = sum(1 for p in products if p.get("available"))
+    oos_count = len(products) - in_stock_count
+    title = (
+        f"<b>Amul {category_emoji} {category_label} Products</b> ({pincode} - {substore})\n"
+        f"🟢 <b>{in_stock_count} In Stock</b> | 🔴 <b>{oos_count} Out of Stock</b> ({len(products)} total)\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
     show_protein = category_label.lower() == "protein"
     histories = stock_histories or {}
     favs = favourite_skus or set()

@@ -8,15 +8,22 @@ from pricewatch.bot.formatters import (
     format_amul_category_menu,
     format_amul_category_messages,
     format_amul_category_view,
+    format_amul_favourites_messages,
+    format_amul_search_messages,
     format_amul_tracking_confirmed,
     format_settings_menu,
     format_stepwise_product_preview,
+    format_subscription_list,
     format_tracking_confirmation,
 )
 from pricewatch.bot.keyboards import (
+    build_action_nav_keyboard,
     build_amul_category_keyboard,
     build_amul_product_stock_keyboard,
+    build_category_navigation_keyboard,
     build_listing_card_keyboard,
+    build_pincode_keyboard,
+    build_search_suggestions_keyboard,
     build_settings_keyboard,
     build_target_price_keyboard,
 )
@@ -139,7 +146,7 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             substore = await amul_provider.resolve_substore_for_pincode(pincode)
 
             text = format_amul_category_menu(pincode=pincode, substore=substore)
-            kb = build_amul_category_keyboard()
+            kb = build_amul_category_keyboard(pincode=pincode)
             try:
                 await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
             except Exception as e:
@@ -218,11 +225,228 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 except Exception:
                     pass
 
-            # Deliver all chunked messages cleanly so all 24+ items are shown without edit collisions
-            for chunk in messages:
+            # Deliver all chunked messages cleanly with bottom navigation keyboard on final chunk
+            for i, chunk in enumerate(messages):
+                is_last = (i == len(messages) - 1)
+                kb = build_category_navigation_keyboard(cat_id) if is_last else None
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=chunk,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            return
+
+        # Navigation: nav:favs
+        if data == "nav:favs":
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            user = await tracker_service.get_or_register_user(telegram_id=user_id)
+            fav_skus = set(user.favourite_skus or [])
+            pincode = user.default_pincode or "842002"
+
+            if not fav_skus:
+                kb = build_action_nav_keyboard("🥛 Browse Protein", "amul_cat:protein", "🔍 Search", "nav:search")
+                try:
+                    await query.edit_message_text(
+                        "⭐ <b>You have no favourites yet.</b>\n\n"
+                        "Browse products with <code>/products</code> or search with <code>/search</code> and tap <b>[Favourite]</b> on any item to save it here!",
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    if "Message is not modified" not in str(e):
+                        raise
+                return
+
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+
+            amul_provider = AmulProvider()
+            substore = await amul_provider.resolve_substore_for_pincode(pincode)
+            all_prods = await amul_provider.fetch_category_products("protein", pincode=pincode, limit=100)
+            fav_products = [p for p in all_prods if p.get("sku") in fav_skus]
+
+            stock_tracker = AmulStockTracker.get_instance()
+            await stock_tracker.load_history_for_substore(substore)
+            stock_tracker.record_batch_observations(fav_products, substore=substore)
+            stock_histories = {
+                p.get("sku"): stock_tracker.get_history(p.get("sku", ""), substore)
+                for p in fav_products
+                if p.get("sku")
+            }
+
+            user_subs = await tracker_service.list_user_subscriptions(user_id)
+            tracked_skus = {s[1].external_variant_id for s in user_subs if s[1].provider_code == "amul"}
+            ao_skus = set(user.auto_order_skus or [])
+            bot_username = context.bot.username or "wheypricewatch_bot"
+
+            messages = format_amul_favourites_messages(
+                pincode=pincode,
+                substore=substore,
+                products=fav_products,
+                tracked_skus=tracked_skus,
+                favourite_skus=fav_skus,
+                auto_order_skus=ao_skus,
+                bot_username=bot_username,
+                stock_histories=stock_histories,
+            )
+
+            for i, chunk in enumerate(messages):
+                is_last = (i == len(messages) - 1)
+                kb = build_action_nav_keyboard("🥛 Browse All Products", "amul_menu", "⚙️ Alert Settings", "cfg:refresh") if is_last else None
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=chunk,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            return
+
+        # Navigation: nav:tracked
+        if data == "nav:tracked":
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            items = await tracker_service.list_user_subscriptions(user_id)
+            text = format_subscription_list(items)
+            kb = (
+                build_action_nav_keyboard("🥛 Browse Products", "amul_menu", "⭐ Favourites", "nav:favs")
+                if not items
+                else build_action_nav_keyboard("🥛 Add More Products", "amul_menu", "⚙️ Alert Settings", "cfg:refresh")
+            )
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    raise
+            return
+
+        # Navigation: nav:search
+        if data == "nav:search":
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            text = (
+                "🔍 <b>Amul Product Quick Search</b>\n\n"
+                "Tap any popular search keyword below or type <code>/search &lt;keyword&gt;</code>:"
+            )
+            kb = build_search_suggestions_keyboard()
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    raise
+            return
+
+        # Navigation: nav:pincode
+        if data == "nav:pincode":
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            user = await tracker_service.get_or_register_user(telegram_id=user_id)
+            curr_pin = user.default_pincode or "842002"
+            amul_provider = AmulProvider()
+            substore = await amul_provider.resolve_substore_for_pincode(curr_pin)
+            text = (
+                f"📍 <b>Delivery Hub & Pincode</b>\n\n"
+                f"• Current Pincode: <b>{curr_pin}</b> (Warehouse: <i>{substore}</i>)\n\n"
+                "Tap a quick hub below to switch warehouse stock, or type <code>/setpincode &lt;6-digit&gt;</code>:"
+            )
+            kb = build_pincode_keyboard(curr_pin)
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    raise
+            return
+
+        # Quick Hub Switcher: set_pin:<pincode>
+        if data.startswith("set_pin:"):
+            new_pin = data.split(":")[1]
+            await tracker_service.set_user_pincode(user_id, new_pin)
+            amul_provider = AmulProvider()
+            substore = await amul_provider.resolve_substore_for_pincode(new_pin)
+            try:
+                await query.answer(f"Pincode set to {new_pin} ({substore}) ✅")
+            except Exception:
+                pass
+            text = (
+                f"📍 <b>Delivery Hub & Pincode</b>\n\n"
+                f"• Current Pincode: <b>{new_pin}</b> (Warehouse: <i>{substore}</i>) ✅\n\n"
+                "Tap a quick hub below to switch warehouse stock, or type <code>/setpincode &lt;6-digit&gt;</code>:"
+            )
+            kb = build_pincode_keyboard(new_pin)
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    raise
+            return
+
+        # Quick Search: quick_search:<term>
+        if data.startswith("quick_search:"):
+            term = data.split(":")[1]
+            try:
+                await query.answer(f"Searching for {term}...")
+            except Exception:
+                pass
+
+            user = await tracker_service.get_or_register_user(telegram_id=user_id)
+            pincode = user.default_pincode or "842002"
+
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+
+            amul_provider = AmulProvider()
+            substore = await amul_provider.resolve_substore_for_pincode(pincode)
+            products = await amul_provider.search_products(term, pincode=pincode)
+
+            stock_tracker = AmulStockTracker.get_instance()
+            await stock_tracker.load_history_for_substore(substore)
+            stock_tracker.record_batch_observations(products, substore=substore)
+            stock_histories = {
+                p.get("sku"): stock_tracker.get_history(p.get("sku", ""), substore)
+                for p in products
+                if p.get("sku")
+            }
+
+            user_subs = await tracker_service.list_user_subscriptions(user_id)
+            tracked_skus = {s[1].external_variant_id for s in user_subs if s[1].provider_code == "amul"}
+            fav_skus = set(user.favourite_skus or [])
+            ao_skus = set(user.auto_order_skus or [])
+            bot_username = context.bot.username or "wheypricewatch_bot"
+
+            messages = format_amul_search_messages(
+                query=term,
+                pincode=pincode,
+                substore=substore,
+                products=products,
+                tracked_skus=tracked_skus,
+                favourite_skus=fav_skus,
+                auto_order_skus=ao_skus,
+                bot_username=bot_username,
+                stock_histories=stock_histories,
+            )
+
+            for i, chunk in enumerate(messages):
+                is_last = (i == len(messages) - 1)
+                kb = build_action_nav_keyboard("⬅️ Back to Categories", "amul_menu", "⭐ Favourites", "nav:favs") if is_last else None
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=chunk,
+                    reply_markup=kb,
                     parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
