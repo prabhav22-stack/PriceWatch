@@ -7,7 +7,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from pricewatch.config import settings
+from pricewatch.config import get_provider_check_interval, settings
 from pricewatch.domain.enums import ProviderTier
 from pricewatch.domain.models import PriceObservation
 from pricewatch.logging_setup import get_logger, setup_logging
@@ -91,8 +91,9 @@ async def run_worker(
             alerts = await alert_service.process_quote(listing, res.quote)
             total_alerts += alerts
 
-            # Calculate next check interval with adaptive jitter
-            next_check = now + timedelta(minutes=settings.DEFAULT_CHECK_INTERVAL_MINUTES)
+            # Calculate next check interval with tiered provider frequency
+            interval_td = get_provider_check_interval(listing.provider_code)
+            next_check = now + interval_td
             await repo.update_listing_state(
                 listing_id=listing.id,
                 last_price_paise=res.quote.price_paise,
@@ -104,7 +105,9 @@ async def run_worker(
         else:
             failed += 1
             consecutive = listing.consecutive_failures + 1
-            backoff_minutes = min(360, settings.DEFAULT_CHECK_INTERVAL_MINUTES * (2 ** min(consecutive, 5)))
+            interval_td = get_provider_check_interval(listing.provider_code)
+            base_minutes = max(1, int(interval_td.total_seconds() // 60))
+            backoff_minutes = min(360, base_minutes * (2 ** min(consecutive, 5)))
             next_check = now + timedelta(minutes=backoff_minutes)
 
             await repo.update_listing_state(

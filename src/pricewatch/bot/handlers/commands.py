@@ -32,6 +32,7 @@ from pricewatch.bot.keyboards import (
     build_variant_selection_keyboard,
     build_welcome_keyboard,
 )
+from pricewatch.config import settings
 from pricewatch.domain.exceptions import VariantAmbiguousError
 from pricewatch.domain.models import CanonicalListing, Subscription
 from pricewatch.providers.amul import AmulProvider
@@ -39,6 +40,7 @@ from pricewatch.providers.base import ProviderRegistry
 from pricewatch.services.amul_auto_order import AmulAutoOrderService
 from pricewatch.services.amul_stock_tracker import AmulStockTracker
 from pricewatch.services.chart_service import ChartService
+from pricewatch.services.check_orchestrator import CheckOrchestrator
 from pricewatch.services.tracker_service import TrackerService
 from pricewatch.validation.normalizer import parse_inr_to_paise
 
@@ -465,17 +467,74 @@ async def map_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /status command."""
+    """Handle /status command with accurate tiered frequency metrics."""
     if not update.effective_message:
         return
-    await update.effective_message.reply_html(
+    text = (
         "⚡ <b>PriceWatch 2.0 System Status</b>\n\n"
         "• <b>Status:</b> 🟢 Operational\n"
-        "• <b>Check Frequency:</b> Every 15 minutes\n"
+        "• <b>Tiered Check Frequencies:</b>\n"
+        f"   🥛 <b>Amul Shop:</b> Every {settings.AMUL_CHECK_INTERVAL_SECONDS}s (High-frequency REST poller)\n"
+        f"   🛍️ <b>Shopify Stores (Nakpro, etc.):</b> Every {settings.SHOPIFY_CHECK_INTERVAL_MINUTES} minutes\n"
+        f"   🛒 <b>Marketplaces (Amazon, Fresh):</b> Every {settings.MARKETPLACE_CHECK_INTERVAL_MINUTES} minutes\n"
         "• <b>Engine:</b> Tiered HTTP & Scoped Extractors\n"
         "• <b>Amul Provider:</b> StoreHippo REST Handshake\n"
-        "• <b>Database:</b> Coordinated PostgreSQL Lease Locks"
+        "• <b>Database:</b> Coordinated PostgreSQL Lease Locks\n\n"
+        "💡 <i>Tip: Send <code>/check</code> anytime for an instant live check of your tracked items!</i>"
     )
+    kb = build_action_nav_keyboard("⚡ Run Live /check", "nav:live_check", "📋 Tracked Items", "nav:tracked")
+    await update.effective_message.reply_html(text, reply_markup=kb)
+
+
+async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Instant live on-demand check for all user tracked items."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user_id = update.effective_user.id
+    subs = await tracker_service.list_user_subscriptions(user_id)
+
+    if not subs:
+        kb = build_action_nav_keyboard("🥛 Browse Products", "amul_menu", "⭐ Favourites", "nav:favs")
+        await update.effective_message.reply_html(
+            "📭 <b>You have no active tracked items to check.</b>\n\n"
+            "Browse products with <code>/products</code> or paste any product link here to start tracking!",
+            reply_markup=kb,
+        )
+        return
+
+    status_msg = await update.effective_message.reply_html(
+        f"⏳ <i>Performing instant live check across your <b>{len(subs)}</b> tracked items...</i>"
+    )
+
+    orchestrator = CheckOrchestrator(max_concurrency=3)
+    results_lines = [
+        f"⚡ <b>Live Stock & Price Check</b> ({len(subs)} items)\n"
+    ]
+
+    for i, (sub, listing) in enumerate(subs, 1):
+        try:
+            check_res = await orchestrator.check_listing(listing)
+            if check_res.success and check_res.quote:
+                q = check_res.quote
+                price_str = f"₹{(q.price_paise or 0) / 100:,.0f}" if q.price_paise else "N/A"
+                if q.available:
+                    qty_str = f" ({q.inventory_quantity} units)" if q.inventory_quantity is not None else ""
+                    stock_badge = f"🟢 In Stock{qty_str}"
+                else:
+                    stock_badge = "🔴 Out of Stock"
+
+                title = listing.product_title
+                results_lines.append(f"{i}. <b>{title}</b>\n   {stock_badge} | 💰 {price_str}")
+            else:
+                results_lines.append(f"{i}. <b>{listing.product_title}</b>\n   ⚠️ Check failed: {check_res.error or 'Timeout'}")
+        except Exception as err:
+            results_lines.append(f"{i}. <b>{listing.product_title}</b>\n   ⚠️ Error: {str(err)[:50]}")
+
+    results_lines.append("\n✅ <i>All tracked items refreshed with live store data!</i>")
+    kb = build_action_nav_keyboard("📋 View Tracked List", "nav:tracked", "⚙️ Alert Settings", "cfg:refresh")
+    await status_msg.edit_text("\n".join(results_lines), reply_markup=kb, parse_mode="HTML")
 
 
 async def amul_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

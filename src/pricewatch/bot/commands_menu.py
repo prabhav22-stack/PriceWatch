@@ -28,6 +28,7 @@ DEFAULT_BOT_COMMANDS: List[BotCommand] = [
     BotCommand("analytics", "Warehouse restock & inventory metrics"),
     BotCommand("history", "View price trend chart"),
     BotCommand("map", "Amul warehouse delivery hubs"),
+    BotCommand("check", "Instant live check for all your tracked items"),
     BotCommand("status", "System health & uptime status"),
     BotCommand("support", "Support & GitHub community"),
 ]

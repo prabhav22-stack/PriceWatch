@@ -17,6 +17,7 @@ from pricewatch.bot.handlers.commands import (
     amul_command_handler,
     analytics_command_handler,
     autoorder_command_handler,
+    check_command_handler,
     favourites_command_handler,
     help_handler,
     history_command_handler,
@@ -71,6 +72,7 @@ def create_telegram_app(
     app.add_handler(CommandHandler("setpincode", setpincode_handler))
     app.add_handler(CommandHandler("pincode", pincode_handler))
     app.add_handler(CommandHandler("status", status_handler))
+    app.add_handler(CommandHandler("check", check_command_handler))
     app.add_handler(CommandHandler("amul", amul_command_handler))
     app.add_handler(CommandHandler("products", amul_command_handler))
     app.add_handler(CommandHandler("search", search_command_handler))

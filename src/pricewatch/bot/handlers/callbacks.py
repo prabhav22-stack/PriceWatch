@@ -329,6 +329,16 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                     raise
             return
 
+        # Navigation: nav:live_check
+        if data == "nav:live_check":
+            try:
+                await query.answer("Running live check...")
+            except Exception:
+                pass
+            from pricewatch.bot.handlers.commands import check_command_handler
+            await check_command_handler(update, context)
+            return
+
         # Navigation: nav:search
         if data == "nav:search":
             try:

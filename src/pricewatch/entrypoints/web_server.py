@@ -110,8 +110,10 @@ async def run_server_async(port: int, webhook_url: str) -> None:
     tornado_app.listen(port, address="0.0.0.0")
     logger.info("PriceWatch HTTP server listening on 0.0.0.0", port=port)
 
-    # Launch 60-second high-frequency Amul stock poller
-    amul_task = asyncio.create_task(run_amul_poller(repo=repo, bot=ptb_app.bot, interval_seconds=60))
+    # Launch high-frequency Amul stock poller (Tier 1: 30s)
+    amul_task = asyncio.create_task(
+        run_amul_poller(repo=repo, bot=ptb_app.bot, interval_seconds=settings.AMUL_CHECK_INTERVAL_SECONDS)
+    )
 
     # Keep running
     try:

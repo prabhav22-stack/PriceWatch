@@ -1,5 +1,6 @@
 """Application configuration managed via Pydantic BaseSettings."""
 
+from datetime import timedelta
 from typing import List
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,9 +30,12 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")
     RENDER_HEALTHZ_URL: str = Field(default="", description="Render health check endpoint URL")
 
-    # Scheduling & Worker Concurrency
+    # Scheduling & Worker Concurrency (Tiered Frequency by Store Provider)
     HTTP_BATCH_SIZE: int = Field(default=40, description="Max listings to claim per HTTP check run")
     BROWSER_BATCH_SIZE: int = Field(default=15, description="Max listings to claim per Playwright run")
+    AMUL_CHECK_INTERVAL_SECONDS: int = Field(default=30, description="Amul StoreHippo REST poll interval in seconds")
+    SHOPIFY_CHECK_INTERVAL_MINUTES: int = Field(default=3, description="Shopify stores (Nakpro, etc.) check interval in minutes")
+    MARKETPLACE_CHECK_INTERVAL_MINUTES: int = Field(default=15, description="Marketplaces (Amazon, Fresh) check interval in minutes")
     DEFAULT_CHECK_INTERVAL_MINUTES: int = Field(default=15, description="Standard check interval in minutes")
     WORKER_LEASE_SECONDS: int = Field(default=300, description="Database lease lock duration in seconds")
     MAX_CONSECUTIVE_FAILURES: int = Field(default=10, description="Max consecutive failures before backoff")
@@ -53,3 +57,20 @@ class Settings(BaseSettings):
 
 # Global cached settings instance
 settings = Settings()
+
+
+def get_provider_check_interval(provider_code: str) -> timedelta:
+    """
+    Tiered check frequency based on store provider rate limits and architecture:
+    - Tier 1: Amul StoreHippo REST API -> 30 seconds
+    - Tier 2: Shopify stores (Nakpro, MB) -> 3 minutes
+    - Tier 3: Marketplaces (Amazon, Fresh, Flipkart) -> 15 minutes
+    """
+    code = (provider_code or "").lower()
+    if code == "amul":
+        return timedelta(seconds=settings.AMUL_CHECK_INTERVAL_SECONDS)
+    if code.startswith("shopify"):
+        return timedelta(minutes=settings.SHOPIFY_CHECK_INTERVAL_MINUTES)
+    if code in ("amazon", "amazon_fresh", "flipkart"):
+        return timedelta(minutes=settings.MARKETPLACE_CHECK_INTERVAL_MINUTES)
+    return timedelta(minutes=settings.DEFAULT_CHECK_INTERVAL_MINUTES)
