@@ -44,6 +44,7 @@ from pricewatch.services.amul_stock_tracker import AmulStockTracker
 from pricewatch.services.chart_service import ChartService
 from pricewatch.services.check_orchestrator import CheckOrchestrator
 from pricewatch.services.tracker_service import TrackerService
+from pricewatch.utils.time_utils import format_ist_datetime
 from pricewatch.validation.normalizer import parse_inr_to_paise
 
 
@@ -555,7 +556,11 @@ async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     qty_str = f" ({q.inventory_quantity} units)" if q.inventory_quantity is not None else ""
                     stock_badge = f"🟢 In Stock{qty_str}"
                 else:
-                    stock_badge = "🔴 Out of Stock"
+                    time_info = ""
+                    dt = q.last_in_stock_at or listing.last_in_stock_at
+                    if dt:
+                        time_info = f" (Last in stock: {format_ist_datetime(dt)})"
+                    stock_badge = f"🔴 Out of Stock{time_info}"
 
                 results_lines.append(f"{i}. <b>{title}</b>\n   {stock_badge} | 💰 {price_str}")
             else:
@@ -975,7 +980,7 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 target_price_paise=paise,
             )
             conf_text = format_tracking_confirmation(listing, sub)
-            kb = build_listing_card_keyboard(listing.id)
+            kb = build_listing_card_keyboard(listing.id, is_nutrabay=(listing.provider_code == "nutrabay"))
             await update.effective_message.reply_html(conf_text, reply_markup=kb)
             return
         except Exception as exc:
@@ -1083,6 +1088,7 @@ async def _inspect_url_and_prompt_modes(
             listing_id=listing.id,
             current_price_paise=listing.last_price_paise or 0,
             is_in_stock=listing.last_available if listing.last_available is not None else True,
+            is_nutrabay=(listing.provider_code == "nutrabay"),
         )
         await status_msg.edit_text(preview_text, reply_markup=kb, parse_mode="HTML")
 

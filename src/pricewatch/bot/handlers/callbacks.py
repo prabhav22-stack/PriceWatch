@@ -1,5 +1,6 @@
 """Inline keyboard callback query handlers for stepwise onboarding, price charts, and Amul stock."""
 
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -11,6 +12,7 @@ from pricewatch.bot.formatters import (
     format_amul_favourites_messages,
     format_amul_search_messages,
     format_amul_tracking_confirmed,
+    format_nutrabay_stock_report,
     format_settings_menu,
     format_stepwise_product_preview,
     format_subscription_list,
@@ -113,7 +115,7 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             saved_sub = await tracker_service.sub_repo.create_or_update_subscription(sub)
             context.user_data.pop("awaiting_custom_price", None)
             conf_text = format_tracking_mode_confirmation(listing, saved_sub, mode)
-            kb = build_listing_card_keyboard(listing_id)
+            kb = build_listing_card_keyboard(listing_id, is_nutrabay=(listing.provider_code == "nutrabay"))
             await query.edit_message_text(conf_text, reply_markup=kb, parse_mode="HTML")
             return
 
@@ -130,7 +132,7 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             )
             context.user_data.pop("awaiting_custom_price", None)
             conf_text = format_tracking_confirmation(listing, sub)
-            kb = build_listing_card_keyboard(listing_id)
+            kb = build_listing_card_keyboard(listing_id, is_nutrabay=(listing.provider_code == "nutrabay"))
             await query.edit_message_text(conf_text, reply_markup=kb, parse_mode="HTML")
             return
 
@@ -183,6 +185,51 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 ),
                 parse_mode="HTML",
             )
+            return
+
+        # 3b. Nutrabay Last in Stock Intelligence: nb_stock:<listing_id>
+        if data.startswith("nb_stock:"):
+            listing_id = int(data.split(":")[1])
+            listing = await tracker_service.get_listing(listing_id)
+            if not listing:
+                await query.answer("Listing not found.", show_alert=True)
+                return
+
+            try:
+                await query.answer("Checking Nutrabay live stock & warehouse data...")
+            except Exception:
+                pass
+
+            quote = None
+            try:
+                from pricewatch.providers.nutrabay import NutrabayProvider
+                provider = NutrabayProvider()
+                quote = await provider.fetch_quote(
+                    canonical_url=listing.canonical_url,
+                    external_product_id=listing.external_product_id,
+                    external_variant_id=listing.external_variant_id,
+                )
+                if quote and quote.last_in_stock_at:
+                    await tracker_service.listing_repo.update_listing_state(
+                        listing_id=listing.id,
+                        last_price_paise=quote.price_paise,
+                        last_mrp_paise=quote.mrp_paise,
+                        last_available=quote.available,
+                        next_check_at=datetime.now(timezone.utc),
+                    )
+            except Exception as e:
+                logger.warning("Could not fetch live Nutrabay quote for stock report", error=str(e))
+
+            report_text = format_nutrabay_stock_report(listing, quote)
+            kb = build_action_nav_keyboard(
+                "🔄 Refresh Stock", f"nb_stock:{listing_id}",
+                "📋 Tracked Items", "nav:tracked"
+            )
+            try:
+                await query.edit_message_text(report_text, reply_markup=kb, parse_mode="HTML")
+            except Exception as exc:
+                if "Message is not modified" not in str(exc):
+                    raise
             return
 
         # 4. Untrack confirmation / deletion

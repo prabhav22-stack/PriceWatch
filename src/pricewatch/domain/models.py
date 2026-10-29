@@ -1,7 +1,7 @@
 """Strongly-typed domain models and Data Transfer Objects (DTOs)."""
 
 from datetime import datetime
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from pricewatch.domain.enums import (
@@ -25,6 +25,8 @@ class VariantOption(BaseModel):
     package_quantity: Optional[str] = None
     inventory_quantity: Optional[int] = None
     image_url: Optional[str] = None
+    last_in_stock_at: Optional[datetime] = None
+    warehouse_stock: Optional[Dict[str, int]] = None
 
 
 class ResolutionResult(BaseModel):
@@ -56,6 +58,9 @@ class PriceQuote(BaseModel):
     seller_name: Optional[str] = None
     raw_variant_title: Optional[str] = None
     inventory_quantity: Optional[int] = None
+    last_in_stock_at: Optional[datetime] = None
+    stock_updated_at: Optional[datetime] = None
+    warehouse_stock: Optional[Dict[str, int]] = None
 
 
 class ValidationDecision(BaseModel):
@@ -106,6 +111,8 @@ class CanonicalListing(BaseModel):
     last_mrp_paise: Optional[int] = None
     last_available: Optional[bool] = None
     inventory_quantity: Optional[int] = None
+    last_in_stock_at: Optional[datetime] = None
+    warehouse_stock: Optional[Dict[str, int]] = None
     last_seller_name: Optional[str] = None
     last_checked_at: Optional[datetime] = None
     last_changed_at: Optional[datetime] = None

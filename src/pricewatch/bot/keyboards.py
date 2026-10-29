@@ -94,20 +94,26 @@ def build_tracking_mode_keyboard(
     listing_id: int,
     current_price_paise: int,
     is_in_stock: bool = True,
+    is_nutrabay: bool = False,
 ) -> InlineKeyboardMarkup:
     """Combined intuitive tracking options: Combined Auto-Tracker (Stock & Discounts) or Custom Target."""
-    return InlineKeyboardMarkup([
+    rows: List[List[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton("⚡ Auto-Track (Stock & Discounts)", callback_data=f"trk_mode:{listing_id}:auto"),
         ],
         [
             InlineKeyboardButton("🎯 Set Custom Target Price", callback_data=f"trk_mode:{listing_id}:target"),
         ],
-        [
-            InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
-            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
-        ],
+    ]
+    if is_nutrabay:
+        rows.append([
+            InlineKeyboardButton("🕒 Last in Stock Report", callback_data=f"nb_stock:{listing_id}"),
+        ])
+    rows.append([
+        InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
+        InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
     ])
+    return InlineKeyboardMarkup(rows)
 
 
 def build_target_price_keyboard(listing_id: int, current_price_paise: int) -> InlineKeyboardMarkup:
@@ -138,18 +144,23 @@ def build_target_price_keyboard(listing_id: int, current_price_paise: int) -> In
     ])
 
 
-def build_listing_card_keyboard(listing_id: int) -> InlineKeyboardMarkup:
+def build_listing_card_keyboard(listing_id: int, is_nutrabay: bool = False) -> InlineKeyboardMarkup:
     """Action buttons for tracked listings (Chart + Untrack + Menu)."""
-    return InlineKeyboardMarkup([
+    rows = [
         [
             InlineKeyboardButton("📊 View Price Chart", callback_data=f"chart:{listing_id}"),
             InlineKeyboardButton("🗑️ Untrack", callback_data=f"del:confirm:{listing_id}"),
         ],
-        [
-            InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"),
-            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
-        ],
+    ]
+    if is_nutrabay:
+        rows.append([
+            InlineKeyboardButton("🕒 Last in Stock Report", callback_data=f"nb_stock:{listing_id}"),
+        ])
+    rows.append([
+        InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"),
+        InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
     ])
+    return InlineKeyboardMarkup(rows)
 
 
 def build_welcome_keyboard() -> InlineKeyboardMarkup:

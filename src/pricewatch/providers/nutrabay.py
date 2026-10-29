@@ -2,7 +2,8 @@
 
 import json
 import re
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from selectolax.lexbor import LexborHTMLParser
@@ -125,6 +126,23 @@ class NutrabayProvider(BaseProvider):
                 available = stock_status and (stock_qty is None or stock_qty > 0)
                 variant_canonical = f"https://nutrabay.com{parsed.path}?pId={parent_id}&vId={vid}"
 
+                # Parse updated_at and warehouse breakdown for stock intelligence
+                raw_updated = v.get("updated_at") or var_data.get("updated_at")
+                updated_at_dt = None
+                if raw_updated and isinstance(raw_updated, str):
+                    try:
+                        clean = raw_updated.strip().replace(" ", "T")
+                        updated_at_dt = datetime.fromisoformat(clean)
+                        if updated_at_dt.tzinfo is None:
+                            updated_at_dt = updated_at_dt.replace(tzinfo=timezone.utc)
+                    except Exception:
+                        updated_at_dt = None
+
+                wh_meta = v.get("wh_meta") or var_data.get("wh_meta")
+                warehouse_stock = None
+                if isinstance(wh_meta, dict):
+                    warehouse_stock = {str(k): int(val) for k, val in wh_meta.items() if isinstance(val, (int, float, str)) and str(val).isdigit()}
+
                 variants.append(
                     VariantOption(
                         external_variant_id=vid,
@@ -134,6 +152,8 @@ class NutrabayProvider(BaseProvider):
                         mrp_paise=mrp or None,
                         available=available,
                         inventory_quantity=stock_qty,
+                        last_in_stock_at=updated_at_dt,
+                        warehouse_stock=warehouse_stock,
                     )
                 )
 
@@ -148,6 +168,22 @@ class NutrabayProvider(BaseProvider):
             available = stock_status and (stock_qty is None or stock_qty > 0)
             variant_canonical = f"https://nutrabay.com{parsed.path}?pId={parent_id}&vId={vid}"
 
+            raw_updated = var_data.get("updated_at")
+            updated_at_dt = None
+            if raw_updated and isinstance(raw_updated, str):
+                try:
+                    clean = raw_updated.strip().replace(" ", "T")
+                    updated_at_dt = datetime.fromisoformat(clean)
+                    if updated_at_dt.tzinfo is None:
+                        updated_at_dt = updated_at_dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    updated_at_dt = None
+
+            wh_meta = var_data.get("wh_meta")
+            warehouse_stock = None
+            if isinstance(wh_meta, dict):
+                warehouse_stock = {str(k): int(val) for k, val in wh_meta.items() if isinstance(val, (int, float, str)) and str(val).isdigit()}
+
             variants.append(
                 VariantOption(
                     external_variant_id=vid,
@@ -157,6 +193,8 @@ class NutrabayProvider(BaseProvider):
                     mrp_paise=mrp or None,
                     available=available,
                     inventory_quantity=stock_qty,
+                    last_in_stock_at=updated_at_dt,
+                    warehouse_stock=warehouse_stock,
                 )
             )
 
@@ -243,6 +281,22 @@ class NutrabayProvider(BaseProvider):
         if not v_title:
             v_title = matched_variant.get("variant_swatch_name") or matched_variant.get("name") or "Standard"
 
+        raw_updated = matched_variant.get("updated_at") or var_data.get("updated_at")
+        updated_at_dt = None
+        if raw_updated and isinstance(raw_updated, str):
+            try:
+                clean = raw_updated.strip().replace(" ", "T")
+                updated_at_dt = datetime.fromisoformat(clean)
+                if updated_at_dt.tzinfo is None:
+                    updated_at_dt = updated_at_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                updated_at_dt = None
+
+        wh_meta = matched_variant.get("wh_meta") or var_data.get("wh_meta")
+        warehouse_stock = None
+        if isinstance(wh_meta, dict):
+            warehouse_stock = {str(k): int(val) for k, val in wh_meta.items() if isinstance(val, (int, float, str)) and str(val).isdigit()}
+
         return PriceQuote(
             external_product_id=external_product_id,
             external_variant_id=external_variant_id,
@@ -253,4 +307,7 @@ class NutrabayProvider(BaseProvider):
             raw_variant_title=v_title,
             seller_name="Nutrabay",
             extraction_method="nutrabay:next_data",
+            last_in_stock_at=updated_at_dt,
+            stock_updated_at=updated_at_dt,
+            warehouse_stock=warehouse_stock,
         )

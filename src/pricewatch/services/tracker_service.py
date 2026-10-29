@@ -92,6 +92,8 @@ class TrackerService:
         last_mrp = matched_opt.mrp_paise if matched_opt else None
         last_avail = matched_opt.available if matched_opt else True
         inv_qty = matched_opt.inventory_quantity if matched_opt else None
+        last_in_stock = matched_opt.last_in_stock_at if matched_opt else None
+        wh_stock = matched_opt.warehouse_stock if matched_opt else None
 
         is_hyperlocal = resolution.provider_code in ("amul", "amazon_fresh") or "amazon_fresh" in resolution.provider_code
         listing_pincode = effective_pincode if is_hyperlocal else ""
@@ -110,6 +112,8 @@ class TrackerService:
             last_mrp_paise=last_mrp,
             last_available=last_avail,
             inventory_quantity=inv_qty,
+            last_in_stock_at=last_in_stock,
+            warehouse_stock=wh_stock,
             is_monitored=True,
         )
 
@@ -185,6 +189,9 @@ class TrackerService:
         last_price = matched_opt.price_paise if matched_opt else None
         last_mrp = matched_opt.mrp_paise if matched_opt else None
         last_avail = matched_opt.available if matched_opt else True
+        inv_qty = matched_opt.inventory_quantity if matched_opt else None
+        last_in_stock = matched_opt.last_in_stock_at if matched_opt else None
+        wh_stock = matched_opt.warehouse_stock if matched_opt else None
 
         is_hyperlocal = resolution.provider_code in ("amul", "amazon_fresh") or "amazon_fresh" in resolution.provider_code
         listing_pincode = effective_pincode if is_hyperlocal else ""
@@ -202,6 +209,9 @@ class TrackerService:
             last_price_paise=last_price,
             last_mrp_paise=last_mrp,
             last_available=last_avail,
+            inventory_quantity=inv_qty,
+            last_in_stock_at=last_in_stock,
+            warehouse_stock=wh_stock,
             is_monitored=True,
         )
 

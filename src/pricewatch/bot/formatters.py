@@ -72,7 +72,12 @@ def format_help_message() -> str:
 def format_stepwise_product_preview(listing: CanonicalListing) -> str:
     price_str = format_paise_to_inr(listing.last_price_paise)
     mrp_str = format_paise_to_inr(listing.last_mrp_paise) if listing.last_mrp_paise else None
-    stock_badge = "🟢 In Stock" if listing.last_available else "🔴 Out of Stock"
+
+    if listing.last_available:
+        qty_str = f" ({listing.inventory_quantity} units)" if listing.inventory_quantity is not None else ""
+        stock_badge = f"🟢 In Stock{qty_str}"
+    else:
+        stock_badge = "🔴 Out of Stock"
 
     lines = [
         "🔍 <b>Product Found!</b>",
@@ -89,6 +94,17 @@ def format_stepwise_product_preview(listing: CanonicalListing) -> str:
 
     lines.append(f"📊 <b>Availability:</b> <b>{stock_badge}</b>")
 
+    if listing.last_in_stock_at:
+        ist_time = format_ist_datetime(listing.last_in_stock_at)
+        rel_time = format_relative_time(listing.last_in_stock_at)
+        time_label = "Last Restocked / Verified" if listing.last_available else "Last in Stock / Status Change"
+        lines.append(f"🕒 <b>{time_label}:</b> <code>{ist_time}</code> (<i>{rel_time}</i>)")
+
+    if listing.provider_code == "nutrabay" and listing.warehouse_stock:
+        active_wh = [f"{k}: {v}" for k, v in listing.warehouse_stock.items() if v > 0]
+        if active_wh:
+            lines.append(f"🏭 <b>Warehouses with Stock:</b> <i>{', '.join(active_wh)}</i>")
+
     if listing.pincode:
         lines.append(f"📍 <b>Delivery Pincode:</b> <code>{listing.pincode}</code>")
 
@@ -97,6 +113,69 @@ def format_stepwise_product_preview(listing: CanonicalListing) -> str:
         "⚙️ <b>How would you like to track this product?</b>",
         "<i>What target price would you like to set, or choose an alert mode below (no target price needed for stock or discount alerts!):</i>",
     ])
+    return "\n".join(lines)
+
+
+def format_nutrabay_stock_report(listing: CanonicalListing, quote: Optional[Any] = None) -> str:
+    """Detailed stock & warehouse intelligence report for Nutrabay products."""
+    avail = quote.available if quote else (listing.last_available if listing.last_available is not None else False)
+    qty = (quote.inventory_quantity if quote else None) or listing.inventory_quantity
+    last_dt = (quote.last_in_stock_at if quote else None) or listing.last_in_stock_at
+    wh_stock = (quote.warehouse_stock if quote else None) or listing.warehouse_stock
+
+    price = (quote.price_paise if quote else None) or listing.last_price_paise
+    mrp = (quote.mrp_paise if quote else None) or listing.last_mrp_paise
+
+    if avail:
+        stock_badge = f"🟢 In Stock ({qty} units available)" if qty else "🟢 In Stock"
+    else:
+        stock_badge = "🔴 Out of Stock (0 units)"
+
+    time_str = "Unknown"
+    rel_time = ""
+    if last_dt:
+        time_str = format_ist_datetime(last_dt)
+        rel_time = f" ({format_relative_time(last_dt)})"
+
+    price_str = format_paise_to_inr(price) if price else "N/A"
+    mrp_str = f" (MRP <s>{format_paise_to_inr(mrp)}</s>)" if mrp and price and mrp > price else ""
+
+    lines = [
+        "🕒 <b>Nutrabay Stock & Availability Report</b>",
+        "",
+        f"📦 <b>Product:</b> {listing.product_title}",
+    ]
+    if listing.variant_title and listing.variant_title != "Default":
+        lines.append(f"🏷️ <b>Variant:</b> {listing.variant_title}")
+
+    lines.extend([
+        f"📊 <b>Status:</b> <b>{stock_badge}</b>",
+        f"🕒 <b>Last in Stock / Status Change:</b> <code>{time_str}</code><i>{rel_time}</i>",
+        f"💰 <b>Current Price:</b> <code>{price_str}</code>{mrp_str}",
+        "",
+    ])
+
+    if wh_stock:
+        lines.append("🏭 <b>Regional Warehouse Inventory:</b>")
+        wh_names = {
+            "NWH": "North Warehouse",
+            "ER1": "East Region Hub 1",
+            "ER2": "East Region Hub 2",
+            "ER3": "East Region Hub 3",
+            "ER4": "East Region Hub 4",
+            "ER5": "East Region Hub 5",
+            "ER6": "East Region Hub 6",
+            "ER7": "East Region Hub 7",
+            "PBW": "Pitampura / Bhiwandi Hub",
+            "PBL": "Primary Logistics Hub",
+        }
+        for k, v in wh_stock.items():
+            name = wh_names.get(k, k)
+            unit_icon = "🟢" if v > 0 else "🔴"
+            lines.append(f"• {unit_icon} <b>{name} ({k}):</b> {v} units")
+        lines.append("")
+
+    lines.append("⚡ <i>PriceWatch monitors Nutrabay in real-time and alerts you instantly when restocked!</i>")
     return "\n".join(lines)
 
 

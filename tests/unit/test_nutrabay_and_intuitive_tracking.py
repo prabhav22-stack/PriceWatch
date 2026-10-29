@@ -256,3 +256,79 @@ async def test_callback_nav_home_and_back_buttons():
     query.edit_message_text.assert_called_once()
     welcome_text = query.edit_message_text.call_args[0][0]
     assert "Welcome to PriceWatch 2.0, Alex!" in welcome_text
+
+
+def test_nutrabay_last_in_stock_formatting():
+    from datetime import datetime, timezone
+    from pricewatch.bot.formatters import format_nutrabay_stock_report, format_stepwise_product_preview
+
+    stock_time = datetime(2026, 10, 29, 2, 0, 24, tzinfo=timezone.utc)
+    listing = CanonicalListing(
+        id=50,
+        provider_code="nutrabay",
+        external_product_id="9303750",
+        external_variant_id="4609770",
+        canonical_url="https://nutrabay.com/product/shilajit",
+        product_title="Nutrabay Pure Shilajit",
+        variant_title="20 g (0.04 lb)",
+        last_price_paise=49900,
+        last_mrp_paise=94900,
+        last_available=False,
+        inventory_quantity=0,
+        last_in_stock_at=stock_time,
+        warehouse_stock={"NWH": 0, "ER1": 0, "PBW": 0},
+    )
+
+    report = format_nutrabay_stock_report(listing)
+    assert "Nutrabay Stock & Availability Report" in report
+    assert "Out of Stock" in report
+    assert "Last in Stock / Status Change:" in report
+    assert "07:30 AM" in report
+    assert "North Warehouse (NWH):</b> 0 units" in report
+
+    preview = format_stepwise_product_preview(listing)
+    assert "Out of Stock" in preview
+    assert "Last in Stock / Status Change:" in preview
+    assert "07:30 AM" in preview
+
+
+@pytest.mark.asyncio
+async def test_nutrabay_stock_report_callback():
+    from datetime import datetime, timezone
+    from pricewatch.bot.handlers.callbacks import callback_query_dispatcher
+    from unittest.mock import AsyncMock, MagicMock
+
+    repo = MemoryRepository()
+    stock_time = datetime(2026, 10, 29, 2, 0, 24, tzinfo=timezone.utc)
+    listing = CanonicalListing(
+        id=77,
+        provider_code="nutrabay",
+        external_product_id="9303750",
+        external_variant_id="4609770",
+        canonical_url="https://nutrabay.com/product/shilajit",
+        product_title="Nutrabay Pure Shilajit",
+        variant_title="20 g",
+        last_price_paise=49900,
+        last_available=False,
+        last_in_stock_at=stock_time,
+        warehouse_stock={"NWH": 0, "ER1": 0},
+    )
+    repo.listings[77] = listing
+    tracker_service = TrackerService(repo, repo, repo)
+
+    update = MagicMock()
+    query = update.callback_query
+    query.data = "nb_stock:77"
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"tracker_service": tracker_service}
+
+    await callback_query_dispatcher(update, context)
+
+    query.edit_message_text.assert_called_once()
+    msg_text = query.edit_message_text.call_args[0][0]
+    assert "Nutrabay Stock & Availability Report" in msg_text
+    assert "Out of Stock" in msg_text
+    assert "Last in Stock / Status Change:" in msg_text
