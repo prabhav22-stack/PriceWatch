@@ -16,6 +16,7 @@ from pricewatch.bot.formatters import (
     format_subscription_list,
     format_tracking_confirmation,
     format_tracking_mode_confirmation,
+    format_welcome_message,
 )
 from pricewatch.bot.keyboards import (
     build_action_nav_keyboard,
@@ -28,6 +29,7 @@ from pricewatch.bot.keyboards import (
     build_settings_keyboard,
     build_target_price_keyboard,
     build_tracking_mode_keyboard,
+    build_welcome_keyboard,
 )
 from pricewatch.domain.models import CanonicalListing, Subscription
 from pricewatch.logging_setup import get_logger
@@ -390,6 +392,49 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             )
             try:
                 await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    raise
+            return
+
+        # Navigation: nav:home / nav:start / nav:menu
+        if data in ("nav:home", "nav:start", "nav:menu"):
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            first_name = query.from_user.first_name or "there"
+            text = format_welcome_message(first_name)
+            kb = build_welcome_keyboard()
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    raise
+            return
+
+        # Navigation: nav:status
+        if data == "nav:status":
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            from pricewatch.config import settings
+            status_text = (
+                "⚡ <b>PriceWatch 2.0 System Status</b>\n\n"
+                "• <b>Status:</b> 🟢 Operational\n"
+                "• <b>Tiered Check Frequencies:</b>\n"
+                f"   🥛 <b>Amul Shop:</b> Every {settings.AMUL_CHECK_INTERVAL_SECONDS}s (High-frequency REST poller)\n"
+                f"   🛍️ <b>Shopify Stores (Nakpro, etc.):</b> Every {settings.SHOPIFY_CHECK_INTERVAL_MINUTES} minutes\n"
+                f"   🛒 <b>Marketplaces (Amazon, Fresh):</b> Every {settings.MARKETPLACE_CHECK_INTERVAL_MINUTES} minutes\n"
+                "• <b>Engine:</b> Tiered HTTP & Scoped Extractors\n"
+                "• <b>Amul Provider:</b> StoreHippo REST Handshake\n"
+                "• <b>Database:</b> Coordinated PostgreSQL Lease Locks\n\n"
+                "💡 <i>Tip: Send <code>/check</code> anytime for an instant live check of your tracked items!</i>"
+            )
+            kb = build_action_nav_keyboard("⚡ Run Live /check", "nav:live_check", "📋 Tracked Items", "nav:tracked")
+            try:
+                await query.edit_message_text(status_text, reply_markup=kb, parse_mode="HTML")
             except Exception as e:
                 if "Message is not modified" not in str(e):
                     raise

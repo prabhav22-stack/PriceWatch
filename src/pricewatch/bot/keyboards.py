@@ -27,7 +27,10 @@ def build_variant_selection_keyboard(
 
         keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
 
-    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel")])
+    keyboard.append([
+        InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
+        InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
+    ])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -68,9 +71,9 @@ def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("🔄 Refresh Status", callback_data="cfg:refresh"),
+            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
         ],
     ])
-
 
 
 def build_untrack_keyboard(listing_id: int) -> InlineKeyboardMarkup:
@@ -79,7 +82,11 @@ def build_untrack_keyboard(listing_id: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("🗑️ Yes, Untrack", callback_data=f"del:confirm:{listing_id}"),
             InlineKeyboardButton("❌ Cancel", callback_data="del:cancel"),
-        ]
+        ],
+        [
+            InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"),
+            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
+        ],
     ])
 
 
@@ -98,6 +105,7 @@ def build_tracking_mode_keyboard(
         ],
         [
             InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
+            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
         ],
     ])
 
@@ -124,19 +132,23 @@ def build_target_price_keyboard(listing_id: int, current_price_paise: int) -> In
             InlineKeyboardButton("✏️ Custom Price", callback_data=f"tgt_custom:{listing_id}"),
         ],
         [
-            InlineKeyboardButton("⬅️ Back to Tracking Options", callback_data=f"trk_mode:{listing_id}:back"),
+            InlineKeyboardButton("⬅️ Back to Modes", callback_data=f"trk_mode:{listing_id}:back"),
             InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
         ],
     ])
 
 
 def build_listing_card_keyboard(listing_id: int) -> InlineKeyboardMarkup:
-    """Action buttons for tracked listings (Chart + Untrack)."""
+    """Action buttons for tracked listings (Chart + Untrack + Menu)."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📊 View Price Chart", callback_data=f"chart:{listing_id}"),
             InlineKeyboardButton("🗑️ Untrack", callback_data=f"del:confirm:{listing_id}"),
-        ]
+        ],
+        [
+            InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"),
+            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
+        ],
     ])
 
 
@@ -150,6 +162,10 @@ def build_welcome_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"),
             InlineKeyboardButton("⚙️ Alert Settings", callback_data="cfg:refresh"),
+        ],
+        [
+            InlineKeyboardButton("⚡ Run Live Check", callback_data="nav:live_check"),
+            InlineKeyboardButton("📊 System Status", callback_data="nav:status"),
         ],
         [
             InlineKeyboardButton("🔍 Quick Search", callback_data="nav:search"),
@@ -175,6 +191,9 @@ def build_amul_category_keyboard(pincode: str = "842002") -> InlineKeyboardMarku
         InlineKeyboardButton(f"📍 PIN: {pincode}", callback_data="nav:pincode"),
         InlineKeyboardButton("⚙️ Alert Settings", callback_data="cfg:refresh"),
     ])
+    rows.append([
+        InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
+    ])
     return InlineKeyboardMarkup(rows)
 
 
@@ -188,6 +207,9 @@ def build_category_navigation_keyboard(category_id: str = "protein") -> InlineKe
         [
             InlineKeyboardButton("🔍 Quick Search", callback_data="nav:search"),
             InlineKeyboardButton("⚙️ Alert Settings", callback_data="cfg:refresh"),
+        ],
+        [
+            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
         ],
     ])
 
@@ -212,8 +234,11 @@ def build_pincode_keyboard(current_pin: str = "842002") -> InlineKeyboardMarkup:
         InlineKeyboardButton(f"🥛 Browse Products for {current_pin}", callback_data="amul_menu"),
     ])
     rows.append([
-        InlineKeyboardButton("⬅️ Back to Menu", callback_data="amul_menu"),
+        InlineKeyboardButton("🥛 Browse Amul", callback_data="amul_menu"),
         InlineKeyboardButton("⚙️ Settings", callback_data="cfg:refresh"),
+    ])
+    rows.append([
+        InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -242,6 +267,9 @@ def build_repeat_keyboard(current_count: int = 0) -> InlineKeyboardMarkup:
             InlineKeyboardButton("⚙️ Full Settings", callback_data="cfg:refresh"),
             InlineKeyboardButton("🥛 Browse Amul", callback_data="amul_menu"),
         ],
+        [
+            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
+        ],
     ])
 
 
@@ -264,17 +292,28 @@ def build_search_suggestions_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("⬅️ Back to Categories", callback_data="amul_menu"),
             InlineKeyboardButton("⭐ Favourites", callback_data="nav:favs"),
         ],
+        [
+            InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
+        ],
     ])
 
 
 def build_action_nav_keyboard(
-    btn1_text: str, btn1_cb: str, btn2_text: Optional[str] = None, btn2_cb: Optional[str] = None
+    btn1_text: str,
+    btn1_cb: str,
+    btn2_text: Optional[str] = None,
+    btn2_cb: Optional[str] = None,
+    include_home: bool = True,
 ) -> InlineKeyboardMarkup:
-    """Generic 1-2 button navigation bar for confirmation/action messages."""
+    """Generic 1-2 button navigation bar for confirmation/action messages with optional home/back button."""
+    rows: List[List[InlineKeyboardButton]] = []
     row = [InlineKeyboardButton(btn1_text, callback_data=btn1_cb)]
     if btn2_text and btn2_cb:
         row.append(InlineKeyboardButton(btn2_text, callback_data=btn2_cb))
-    return InlineKeyboardMarkup([row])
+    rows.append(row)
+    if include_home and btn1_cb not in ("nav:home", "nav:start") and btn2_cb not in ("nav:home", "nav:start"):
+        rows.append([InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home")])
+    return InlineKeyboardMarkup(rows)
 
 
 def build_amul_product_stock_keyboard(
@@ -301,6 +340,8 @@ def build_amul_product_stock_keyboard(
 
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=cb_data)])
 
-    keyboard.append([InlineKeyboardButton("⬅️ Back to Categories", callback_data="amul_menu")])
+    keyboard.append([
+        InlineKeyboardButton("⬅️ Back to Categories", callback_data="amul_menu"),
+        InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
+    ])
     return InlineKeyboardMarkup(keyboard)
-

@@ -1,18 +1,43 @@
 """Telegram Application factory and handler registration."""
 
 from typing import Optional
+from telegram import Update
 from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
 )
 
 from pricewatch.bot.commands_menu import configure_bot_menu_button
 from pricewatch.bot.handlers.callbacks import callback_query_dispatcher
+from pricewatch.logging_setup import get_logger
+
+logger = get_logger("bot_app")
+
+
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global uncaught exception handler to prevent bot from silently stalling or leaving buttons spinning."""
+    err = context.error
+    logger.exception("Uncaught exception in Telegram update handler", error=str(err))
+
+    if isinstance(update, Update):
+        if update.callback_query:
+            try:
+                await update.callback_query.answer("⚠️ An error occurred. Please try again.", show_alert=False)
+            except Exception:
+                pass
+        if update.effective_message:
+            try:
+                await update.effective_message.reply_html(
+                    "⚠️ <i>An unexpected issue occurred while processing your request. Please try again or send /start.</i>"
+                )
+            except Exception:
+                pass
 from pricewatch.bot.handlers.commands import (
     amul_command_handler,
     analytics_command_handler,
@@ -97,5 +122,8 @@ def create_telegram_app(
 
     # Central Callback Query Handler (pills, variant buttons, chart, Amul)
     app.add_handler(CallbackQueryHandler(callback_query_dispatcher))
+
+    # Global Uncaught Error Handler
+    app.add_error_handler(global_error_handler)
 
     return app

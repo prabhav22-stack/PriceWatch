@@ -60,6 +60,24 @@ def test_gate3_rejects_pincode_mismatch(sample_quote: PriceQuote, sample_listing
     assert "Pincode mismatch" in (decision.reason or "")
 
 
+def test_gate3_allows_nationwide_provider_without_verified_pincode(sample_quote: PriceQuote, sample_listing: CanonicalListing):
+    # Nutrabay or Shopify listing has user default pincode, but nationwide store returns empty verified_pincode
+    nutrabay_listing = sample_listing.model_copy(update={"provider_code": "nutrabay", "pincode": "842002"})
+    nationwide_quote = sample_quote.model_copy(update={"verified_pincode": ""})
+    decision = PriceValidator.validate(nationwide_quote, nutrabay_listing)
+    assert decision.status == ValidationStatus.VALID
+
+
+def test_gate3_rejects_amazon_fresh_missing_verified_pincode(sample_quote: PriceQuote, sample_listing: CanonicalListing):
+    # Amazon Fresh strictly requires verified pincode
+    fresh_listing = sample_listing.model_copy(update={"provider_code": "amazon_fresh", "pincode": "560001"})
+    fresh_quote = sample_quote.model_copy(update={"verified_pincode": ""})
+    decision = PriceValidator.validate(fresh_quote, fresh_listing)
+    assert decision.status == ValidationStatus.REJECTED
+    assert decision.gate_failed == 3
+    assert "Pincode verification required" in (decision.reason or "")
+
+
 def test_gate4_rejects_mrp_inversion(sample_quote: PriceQuote, sample_listing: CanonicalListing):
     # Selling price ₹2,500 > MRP ₹1,999
     inverted_quote = sample_quote.model_copy(update={"price_paise": 250000, "mrp_paise": 199900})

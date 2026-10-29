@@ -1,7 +1,8 @@
 """Telegram command handlers (/start, /help, /track, /list, /untrack, /pincode, /status, /amul, /history)."""
 
+import html
 import re
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from pricewatch.bot.formatters import (
@@ -221,7 +222,8 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not update.effective_message:
         return
     text = format_help_message()
-    await update.effective_message.reply_html(text)
+    kb = build_action_nav_keyboard("🥛 Browse Amul", "amul_menu", "📋 Tracked Items", "nav:tracked")
+    await update.effective_message.reply_html(text, reply_markup=kb)
 
 
 async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -243,9 +245,11 @@ async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• 🛍️ <b>Shopify Stores:</b> Nakpro, MuscleBlaze, The Whole Truth, etc.\n\n"
             "<i>💡 After sending the link, you can choose to track when it's back in stock, track significant discounts, or set a target price!</i>"
         )
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         cancel_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel")]
+            [
+                InlineKeyboardButton("❌ Cancel", callback_data="trk:cancel"),
+                InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
+            ]
         ])
         await update.effective_message.reply_html(prompt_text, reply_markup=cancel_kb)
         return
@@ -352,16 +356,21 @@ async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not subs:
             await update.effective_message.reply_html(
                 "📭 <b>You have no active tracked products to untrack.</b>\n\n"
-                "Browse products with <code>/products</code> or paste any product link to start tracking."
+                "Browse products with <code>/products</code> or paste any product link to start tracking.",
+                reply_markup=build_action_nav_keyboard("🥛 Browse Products", "amul_menu", "🏠 Main Menu", "nav:home", include_home=False),
             )
             return
         lines = [
             "🗑️ <b>Select a product to stop tracking:</b>\n"
         ]
+        buttons: List[List[InlineKeyboardButton]] = []
         for sub, listing in subs:
-            lines.append(f"• <b>{listing.product_title}</b>: /untrack_{listing.id}")
-        lines.append("\nTap any link above to untrack immediately.")
-        await update.effective_message.reply_html("\n".join(lines))
+            trunc = (listing.product_title[:28] + "..") if len(listing.product_title) > 28 else listing.product_title
+            lines.append(f"• <b>{html.escape(listing.product_title)}</b>: /untrack_{listing.id}")
+            buttons.append([InlineKeyboardButton(f"🗑️ Untrack: {trunc}", callback_data=f"del:confirm:{listing.id}")])
+        buttons.append([InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home")])
+        lines.append("\nTap any product button below or command link above to untrack:")
+        await update.effective_message.reply_html("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
         return
 
     # Delete the incoming /untrack_<id> command message so it vanishes from chat!
@@ -376,14 +385,16 @@ async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     success = await tracker_service.untrack_product(update.effective_user.id, listing_id)
     if success:
+        kb = build_action_nav_keyboard("📋 View Tracked List", "nav:tracked", "🥛 Browse Amul", "amul_menu")
         await update.effective_chat.send_message(
-            f"🔍 <b>Untracking product: {listing_name}</b>\n"
+            f"🔍 <b>Untracking product: {html.escape(listing_name)}</b>\n"
             f"You will no longer receive updates for this product.",
+            reply_markup=kb,
             parse_mode="HTML",
         )
     else:
         await update.effective_chat.send_message(
-            f"❌ Product <b>{listing_name}</b> not found in your tracking list.",
+            f"❌ Product <b>{html.escape(listing_name)}</b> not found in your tracking list.",
             parse_mode="HTML",
         )
 
@@ -482,7 +493,8 @@ async def map_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "• <b>Bangalore Hub (bangalore):</b> Serving Pincodes <code>560xxx</code>\n\n"
         "Use <code>/setpincode &lt;pincode&gt;</code> to automatically connect to your regional warehouse."
     )
-    await update.effective_message.reply_html(text)
+    kb = build_action_nav_keyboard("🥛 Browse Amul", "amul_menu", "📍 Change Pincode", "nav:pincode")
+    await update.effective_message.reply_html(text, reply_markup=kb)
 
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -535,6 +547,7 @@ async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
     for i, (sub, listing) in enumerate(subs, 1):
         try:
             check_res = await orchestrator.check_listing(listing)
+            title = html.escape(listing.product_title)
             if check_res.success and check_res.quote:
                 q = check_res.quote
                 price_str = f"₹{(q.price_paise or 0) / 100:,.0f}" if q.price_paise else "N/A"
@@ -544,12 +557,12 @@ async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 else:
                     stock_badge = "🔴 Out of Stock"
 
-                title = listing.product_title
                 results_lines.append(f"{i}. <b>{title}</b>\n   {stock_badge} | 💰 {price_str}")
             else:
-                results_lines.append(f"{i}. <b>{listing.product_title}</b>\n   ⚠️ Check failed: {check_res.error or 'Timeout'}")
+                err_text = html.escape(check_res.error or "Check failed")
+                results_lines.append(f"{i}. <b>{title}</b>\n   ⚠️ Check failed: {err_text}")
         except Exception as err:
-            results_lines.append(f"{i}. <b>{listing.product_title}</b>\n   ⚠️ Error: {str(err)[:50]}")
+            results_lines.append(f"{i}. <b>{html.escape(listing.product_title)}</b>\n   ⚠️ Error: {html.escape(str(err)[:60])}")
 
     results_lines.append("\n✅ <i>All tracked items refreshed with live store data!</i>")
     kb = build_action_nav_keyboard("📋 View Tracked List", "nav:tracked", "⚙️ Alert Settings", "cfg:refresh")
@@ -979,9 +992,20 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif is_awaiting_url:
         await update.effective_message.reply_html(
             "⚠️ That doesn't look like a valid link. Please send a full product URL starting with <code>https://</code>\n\n"
-            "<b>Example:</b>\n<code>https://nutrabay.com/product/nutrabay-pure-shilajit/</code>"
+            "<b>Example:</b>\n<code>https://nutrabay.com/product/nutrabay-pure-shilajit/</code>",
+            reply_markup=build_action_nav_keyboard("❌ Cancel", "trk:cancel", "🏠 Main Menu", "nav:home", include_home=False),
         )
         context.user_data["awaiting_track_url"] = True
+        return
+    else:
+        # User typed plain text or asked a question
+        kb = build_action_nav_keyboard("🥛 Browse Amul", "amul_menu", "📋 Tracked Items", "nav:tracked")
+        await update.effective_message.reply_html(
+            "👋 <b>PriceWatch Assistant</b>\n\n"
+            "• 🔗 <b>Paste any product link</b> (Amazon, Nutrabay, Flipkart, MuscleBlaze, Shopify) directly here to track price and stock.\n"
+            "• Or use the buttons below or Telegram <b>Menu</b> to explore:",
+            reply_markup=kb,
+        )
         return
 
 
@@ -998,8 +1022,9 @@ async def _inspect_url_and_prompt_modes(
     try:
         ProviderRegistry.get_provider_for_url(url)
     except Exception as exc:
+        safe_exc = html.escape(str(exc))
         await status_msg.edit_text(
-            f"❌ <b>Unsupported store link:</b>\n{exc}\n\n"
+            f"❌ <b>Unsupported store link:</b>\n{safe_exc}\n\n"
             "Supported stores: Nutrabay, Amazon, Amul Shop, and Shopify stores (Nakpro, MuscleBlaze, etc.).",
             parse_mode="HTML",
         )
@@ -1075,4 +1100,5 @@ async def _inspect_url_and_prompt_modes(
             parse_mode="HTML",
         )
     except Exception as exc:
-        await status_msg.edit_text(f"❌ <b>Failed to inspect link:</b>\n{exc}", parse_mode="HTML")
+        safe_exc = html.escape(str(exc))
+        await status_msg.edit_text(f"❌ <b>Failed to inspect link:</b>\n{safe_exc}", parse_mode="HTML")

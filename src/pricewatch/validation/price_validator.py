@@ -70,13 +70,19 @@ class PriceValidator:
                     reason=f"Package quantity contradiction: expected '{listing.package_quantity}' but title has '{quote.raw_variant_title}'",
                 )
 
-        # Gate 3: Pincode Lock
+        # Gate 3: Pincode Lock (Hyperlocal providers)
         if listing.pincode:
-            if quote.verified_pincode != listing.pincode:
+            if quote.verified_pincode and quote.verified_pincode != listing.pincode:
                 return ValidationDecision(
                     status=ValidationStatus.REJECTED,
                     gate_failed=3,
                     reason=f"Pincode mismatch: page verified '{quote.verified_pincode}' != required '{listing.pincode}'",
+                )
+            elif not quote.verified_pincode and listing.provider_code == "amazon_fresh":
+                return ValidationDecision(
+                    status=ValidationStatus.REJECTED,
+                    gate_failed=3,
+                    reason=f"Pincode verification required for Amazon Fresh listing: required '{listing.pincode}'",
                 )
 
         # Gate 4: MRP vs Selling Price

@@ -93,12 +93,15 @@ class TrackerService:
         last_avail = matched_opt.available if matched_opt else True
         inv_qty = matched_opt.inventory_quantity if matched_opt else None
 
+        is_hyperlocal = resolution.provider_code in ("amul", "amazon_fresh") or "amazon_fresh" in resolution.provider_code
+        listing_pincode = effective_pincode if is_hyperlocal else ""
+
         listing_to_create = CanonicalListing(
             provider_code=resolution.provider_code,
             provider_tier=int(resolution.provider_tier),
             external_product_id=resolution.external_product_id,
             external_variant_id=pinned_variant_id,
-            pincode=effective_pincode,
+            pincode=listing_pincode,
             canonical_url=canonical_url,
             product_title=resolution.product_title,
             variant_title=variant_title,
@@ -183,12 +186,15 @@ class TrackerService:
         last_mrp = matched_opt.mrp_paise if matched_opt else None
         last_avail = matched_opt.available if matched_opt else True
 
+        is_hyperlocal = resolution.provider_code in ("amul", "amazon_fresh") or "amazon_fresh" in resolution.provider_code
+        listing_pincode = effective_pincode if is_hyperlocal else ""
+
         listing_to_create = CanonicalListing(
             provider_code=resolution.provider_code,
             provider_tier=int(resolution.provider_tier),
             external_product_id=resolution.external_product_id,
             external_variant_id=pinned_variant_id,
-            pincode=effective_pincode,
+            pincode=listing_pincode,
             canonical_url=canonical_url,
             product_title=resolution.product_title,
             variant_title=variant_title,

@@ -161,3 +161,98 @@ def test_evaluate_alert_separates_restock_and_discount():
     )
     # Must trigger SIGNIFICANT_DROP!
     assert alert_disc == AlertType.SIGNIFICANT_DROP
+
+
+def test_nutrabay_quote_with_user_pincode_passes_validation():
+    from pricewatch.validation.price_validator import PriceValidator, ValidationStatus
+    listing = CanonicalListing(
+        id=20,
+        provider_code="nutrabay",
+        external_product_id="9303750",
+        external_variant_id="4609770",
+        pincode="842002",
+        canonical_url="https://nutrabay.com/product/shilajit",
+        product_title="Nutrabay Shilajit",
+        last_price_paise=49900,
+        last_available=True,
+    )
+    quote = PriceQuote(
+        external_product_id="9303750",
+        external_variant_id="4609770",
+        price_paise=49900,
+        available=True,
+        verified_pincode="",  # Nationwide store does not verify hyperlocal delivery pincode
+        extraction_method="nutrabay:next_data",
+    )
+    decision = PriceValidator.validate(quote, listing)
+    assert decision.status == ValidationStatus.VALID, f"Failed with: {decision.reason}"
+
+
+@pytest.mark.asyncio
+async def test_plain_text_guidance_response():
+    from pricewatch.bot.handlers.commands import plain_text_handler
+    from unittest.mock import AsyncMock, MagicMock
+
+    update = MagicMock()
+    update.effective_user.id = 999
+    update.effective_message.text = "Hello there"
+    update.effective_message.reply_html = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {"tracker_service": MagicMock()}
+
+    await plain_text_handler(update, context)
+
+    update.effective_message.reply_html.assert_called_once()
+    reply_text = update.effective_message.reply_html.call_args[0][0]
+    assert "PriceWatch Assistant" in reply_text
+    assert "Paste any product link" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_callback_nav_home_and_back_buttons():
+    from pricewatch.bot.handlers.callbacks import callback_query_dispatcher
+    from pricewatch.bot.keyboards import (
+        build_welcome_keyboard,
+        build_amul_category_keyboard,
+        build_settings_keyboard,
+        build_pincode_keyboard,
+        build_action_nav_keyboard,
+    )
+    from pricewatch.domain.models import User
+    from unittest.mock import AsyncMock, MagicMock
+
+    # 1. Test keyboards have home / back button
+    action_kb = build_action_nav_keyboard("Test Btn", "test:cb")
+    assert any("Main Menu" in btn.text for row in action_kb.inline_keyboard for btn in row)
+
+    cat_kb = build_amul_category_keyboard()
+    assert any("Main Menu" in btn.text for row in cat_kb.inline_keyboard for btn in row)
+
+    user = User(telegram_id=999, username="test", max_notify_count=1)
+    set_kb = build_settings_keyboard(user)
+    assert any("Main Menu" in btn.text for row in set_kb.inline_keyboard for btn in row)
+
+    pin_kb = build_pincode_keyboard()
+    assert any("Main Menu" in btn.text for row in pin_kb.inline_keyboard for btn in row)
+
+    # 2. Test nav:home callback query
+    update = MagicMock()
+    query = update.callback_query
+    query.data = "nav:home"
+    query.from_user.id = 999
+    query.from_user.first_name = "Alex"
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+
+    repo = MemoryRepository()
+    tracker_service = TrackerService(repo, repo, repo)
+    context = MagicMock()
+    context.bot_data = {"tracker_service": tracker_service}
+
+    await callback_query_dispatcher(update, context)
+
+    query.edit_message_text.assert_called_once()
+    welcome_text = query.edit_message_text.call_args[0][0]
+    assert "Welcome to PriceWatch 2.0, Alex!" in welcome_text
