@@ -332,3 +332,77 @@ async def test_nutrabay_stock_report_callback():
     assert "Nutrabay Stock & Availability Report" in msg_text
     assert "Out of Stock" in msg_text
     assert "Last in Stock / Status Change:" in msg_text
+
+
+@pytest.mark.asyncio
+async def test_nutrabay_fetch_quote_direct_api_fast_path():
+    provider = NutrabayProvider()
+    mock_payload = {
+        "sale_price": "499",
+        "mrp": "949",
+        "stock_status": True,
+        "stock_quantity": 42,
+        "variant_swatch_name": "20 g",
+        "updated_at": "2026-10-29 02:00:24.035920",
+        "wh_meta": {"NWH": 30, "ER1": 12},
+    }
+
+    with patch.object(provider, "_fetch_variant_api", new_callable=AsyncMock) as mock_api:
+        mock_api.return_value = mock_payload
+        quote = await provider.fetch_quote(
+            canonical_url="https://nutrabay.com/product/shilajit",
+            external_product_id="9303750",
+            external_variant_id="4609770",
+        )
+        assert quote.price_paise == 49900
+        assert quote.mrp_paise == 94900
+        assert quote.available is True
+        assert quote.inventory_quantity == 42
+        assert quote.extraction_method == "nutrabay:rest_api"
+        assert quote.warehouse_stock == {"NWH": 30, "ER1": 12}
+        assert quote.last_in_stock_at is not None
+        mock_api.assert_called_once_with("9303750", "4609770")
+
+
+@pytest.mark.asyncio
+async def test_nutrabay_fetch_quote_fallback_to_next_data():
+    provider = NutrabayProvider()
+    mock_next_data = {
+        "props": {
+            "pageProps": {
+                "initialState": {
+                    "parentProduct": {
+                        "getParentDetails": {"data": {"data": {}}},
+                        "getVariantDetails": {
+                            "data": {
+                                "data": {
+                                    "variant_product_id": "4609770",
+                                    "sale_price": 549,
+                                    "regular_price": 999,
+                                    "stock_status": False,
+                                    "stock_quantity": 0,
+                                    "variant_swatch_name": "20 g",
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+        }
+    }
+
+    with patch.object(provider, "_fetch_variant_api", new_callable=AsyncMock) as mock_api, \
+         patch.object(provider, "_fetch_next_data", new_callable=AsyncMock) as mock_next:
+        mock_api.return_value = None  # Simulates API failure / fallback
+        mock_next.return_value = (mock_next_data, MagicMock())
+
+        quote = await provider.fetch_quote(
+            canonical_url="https://nutrabay.com/product/shilajit",
+            external_product_id="9303750",
+            external_variant_id="4609770",
+        )
+        assert quote.price_paise == 54900
+        assert quote.available is False
+        assert quote.extraction_method == "nutrabay:next_data"
+        mock_next.assert_called_once_with("https://nutrabay.com/product/shilajit")
+

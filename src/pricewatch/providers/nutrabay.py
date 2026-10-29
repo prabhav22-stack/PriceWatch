@@ -229,6 +229,35 @@ class NutrabayProvider(BaseProvider):
             pinned_variant_id=pinned_id,
         )
 
+    async def _fetch_variant_api(self, product_id: str, variant_id: str) -> Optional[dict]:
+        """Fetch variant details directly from Nutrabay internal REST API (<150ms)."""
+        if not product_id or not variant_id:
+            return None
+        api_url = (
+            f"https://nutrabay.com/api/product-details/variant-detail"
+            f"?product_id={product_id}&variant_id={variant_id}"
+        )
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+        }
+        try:
+            resp = await http_client.get(api_url, headers=headers)
+            if resp.status_code == 200:
+                payload = resp.json()
+                if (
+                    isinstance(payload, dict)
+                    and payload.get("status") in (1, True, "1")
+                    and isinstance(payload.get("data"), dict)
+                ):
+                    return payload["data"]
+        except Exception:
+            pass
+        return None
+
     async def fetch_quote(
         self,
         canonical_url: str,
@@ -237,6 +266,65 @@ class NutrabayProvider(BaseProvider):
         pincode: str = "",
     ) -> PriceQuote:
         """Fetch current price, MRP, and stock status for pinned Nutrabay listing."""
+        # 1. Fast path: Direct internal REST API (<150ms)
+        var_data = await self._fetch_variant_api(external_product_id, external_variant_id)
+        if var_data:
+            sale_price = parse_inr_to_paise(str(var_data.get("sale_price") or 0))
+            mrp = parse_inr_to_paise(
+                str(
+                    var_data.get("mrp")
+                    or var_data.get("regular_price")
+                    or var_data.get("mrp_price")
+                    or 0
+                )
+            )
+            stock_status = bool(var_data.get("stock_status", False))
+            stock_qty = var_data.get("stock_quantity")
+            available = stock_status and (stock_qty is None or stock_qty > 0)
+
+            swatches = var_data.get("selected_swatch_display_names") or []
+            v_title = ""
+            if isinstance(swatches, list) and swatches:
+                v_title = ", ".join(str(val) for s in swatches for val in s.values())
+            if not v_title:
+                v_title = var_data.get("variant_swatch_name") or var_data.get("name") or "Standard"
+
+            raw_updated = var_data.get("updated_at")
+            updated_at_dt = None
+            if raw_updated and isinstance(raw_updated, str):
+                try:
+                    clean = raw_updated.strip().replace(" ", "T")
+                    updated_at_dt = datetime.fromisoformat(clean)
+                    if updated_at_dt.tzinfo is None:
+                        updated_at_dt = updated_at_dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    updated_at_dt = None
+
+            wh_meta = var_data.get("wh_meta")
+            warehouse_stock = None
+            if isinstance(wh_meta, dict):
+                warehouse_stock = {
+                    str(k): int(val)
+                    for k, val in wh_meta.items()
+                    if isinstance(val, (int, float, str)) and str(val).isdigit()
+                }
+
+            return PriceQuote(
+                external_product_id=external_product_id,
+                external_variant_id=external_variant_id,
+                price_paise=sale_price or 0,
+                mrp_paise=mrp or None,
+                available=available,
+                inventory_quantity=stock_qty,
+                raw_variant_title=v_title,
+                seller_name="Nutrabay",
+                extraction_method="nutrabay:rest_api",
+                last_in_stock_at=updated_at_dt,
+                stock_updated_at=updated_at_dt,
+                warehouse_stock=warehouse_stock,
+            )
+
+        # 2. Resilient fallback: Full page __NEXT_DATA__ extraction
         data, parser = await self._fetch_next_data(canonical_url)
         props = data.get("props", {}).get("pageProps", {})
         initial_state = props.get("initialState", {})
