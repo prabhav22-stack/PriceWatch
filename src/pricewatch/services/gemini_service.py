@@ -13,9 +13,9 @@ from pricewatch.logging_setup import get_logger
 
 logger = get_logger("gemini_service")
 
-# Default recommended Gemini model for fast agentic workflows
-GEMINI_MODEL = "gemini-3.8-flash"
-GEMINI_FALLBACK_MODEL = "gemini-flash-latest"
+# High-speed Flash Lite model for ultra-fast agentic response and vision
+GEMINI_MODEL = getattr(settings, "GEMINI_MODEL", "gemini-flash-lite-latest") or "gemini-flash-lite-latest"
+GEMINI_FALLBACK_MODEL = "gemini-3.8-flash"
 
 
 class GeminiService:
