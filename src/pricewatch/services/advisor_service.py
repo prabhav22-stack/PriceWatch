@@ -137,7 +137,9 @@ class ConversationalAdvisorService:
 
         # Fallback: heuristics
         low = user_text.lower().strip()
-        if low in ("hi", "hello", "hey", "help", "menu", "start"):
+        words = set(re.findall(r"\b\w+\b", low))
+        greetings = {"hi", "hello", "hey", "help", "menu", "start", "assistant", "info"}
+        if words.intersection(greetings) or low in ("hello there", "hi there", "hey there"):
             return ChatIntent(
                 intent_type="general_chat",
                 chat_reply="Hello! I'm your PriceWatch assistant. You can ask me for product recommendations (e.g. 'top 5 shilajit under 1000'), compare prices across stores (e.g. 'Nakpro Perform 1kg'), or paste any product link to start tracking!",

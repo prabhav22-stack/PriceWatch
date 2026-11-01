@@ -9,6 +9,7 @@ from pricewatch.services.llm_router import HybridLLMRouter
 async def test_llm_router_groq_normalization():
     """Verify router executes Groq normalization when available."""
     router = HybridLLMRouter()
+    router.groq_api_key = "test_groq_key_long_enough"
     mock_data = {
         "brand": "Nakpro",
         "series": "Perform",
@@ -28,6 +29,7 @@ async def test_llm_router_groq_normalization():
 async def test_llm_router_gemini_fallback():
     """Verify router falls back to Gemini if Groq fails or is unavailable."""
     router = HybridLLMRouter()
+    router.groq_api_key = "test_groq_key_long_enough"
     mock_gemini_data = {
         "brand": "Nutrabay",
         "category": "shilajit",
@@ -35,8 +37,10 @@ async def test_llm_router_gemini_fallback():
     }
 
     # Groq fails, Gemini succeeds
-    with patch.object(router, "_normalize_via_groq", new=AsyncMock(return_value=None)):
-        with patch("pricewatch.services.llm_router.gemini_service.normalize_user_query", new=AsyncMock(return_value=mock_gemini_data)):
-            res = await router.normalize_user_query("nutrabay shilajit")
-            assert res is not None
-            assert res["clean_query"] == "Nutrabay Pure Shilajit Resin 20g"
+    from pricewatch.services.gemini_service import gemini_service
+    gemini_service.api_key = "test_gemini_key_long_enough"
+    with patch.object(router, "_normalize_via_groq", new=AsyncMock(return_value=None)), \
+         patch("pricewatch.services.llm_router.gemini_service.normalize_user_query", new=AsyncMock(return_value=mock_gemini_data)):
+        res = await router.normalize_user_query("nutrabay shilajit")
+        assert res is not None
+        assert res["clean_query"] == "Nutrabay Pure Shilajit Resin 20g"

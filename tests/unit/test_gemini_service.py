@@ -17,6 +17,7 @@ async def test_gemini_service_availability():
 async def test_gemini_normalize_query_parsing():
     """Verify query normalization parses Gemini JSON output."""
     svc = GeminiService()
+    svc.api_key = "test_key_long_enough_for_validation"
     mock_json = '{"brand": "Nakpro", "series": "Perform", "category": "whey", "weight_g": 1000, "flavor": "unflavoured", "clean_query": "Nakpro Perform 1kg Unflavoured"}'
 
     with patch.object(svc, "_call_gemini", new=AsyncMock(return_value=mock_json)):
@@ -31,6 +32,7 @@ async def test_gemini_normalize_query_parsing():
 async def test_gemini_deal_verdict_generation():
     """Verify deal verdict string generation."""
     svc = GeminiService()
+    svc.api_key = "test_key_long_enough_for_validation"
     mock_verdict = "Amazon offers the best price on Nakpro Perform with immediate stock."
 
     with patch.object(svc, "_call_gemini", new=AsyncMock(return_value=mock_verdict)):
