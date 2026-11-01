@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     SIGNIFICANT_DISCOUNT_PCT: int = Field(default=10, description="Minimum drop percentage below 30-day median to trigger a significant discount alert")
     MAX_ITEMS_PER_USER: int = Field(default=20, description="Maximum active tracked products per user")
 
+    # Observability & AI
+    GEMINI_API_KEY: str = Field(default="", description="Google Gemini API Key for vision and deal intelligence")
+    SENTRY_DSN: str = Field(default="", description="Sentry DSN for error reporting")
+    PROMETHEUS_ENABLED: bool = Field(default=True, description="Enable Prometheus metrics exporter")
+    WEBAPP_URL: str = Field(default="", description="Telegram Mini App base URL")
+
     @field_validator("TELEGRAM_ADMIN_USER_IDS", mode="before")
     @classmethod
     def parse_admin_ids(cls, v):

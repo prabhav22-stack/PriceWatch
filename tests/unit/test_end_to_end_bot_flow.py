@@ -353,7 +353,7 @@ async def test_lifecycle_stage_5_fastapi_tma_dashboard(test_env):
         res = await client.get("/webapp/dashboard/77")
         assert res.status_code == 200
         assert "ATOM Whey Protein" in res.text
-        assert "chart.js" in res.text.lower()
+        assert "lightweight-charts" in res.text.lower()
         assert "telegram-web-app.js" in res.text
 
         # GET /api/v1/listing/77

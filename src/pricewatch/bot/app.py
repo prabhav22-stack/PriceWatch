@@ -50,6 +50,7 @@ from pricewatch.bot.handlers.commands import (
     history_command_handler,
     list_handler,
     map_handler,
+    photo_message_handler,
     pincode_handler,
     plain_text_handler,
     productcount_command_handler,
@@ -122,6 +123,9 @@ def create_telegram_app(
     # Catch /untrack_123 and /history_123 shorthand commands
     app.add_handler(MessageHandler(filters.Regex(r"^/untrack_\d+"), untrack_handler))
     app.add_handler(MessageHandler(filters.Regex(r"^/history_\d+"), history_command_handler))
+
+    # Catch screenshots & product photos for AI Vision tracking
+    app.add_handler(MessageHandler(filters.PHOTO, photo_message_handler))
 
     # Catch plain text: conversational URL pasting & custom target price replies
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_text_handler))

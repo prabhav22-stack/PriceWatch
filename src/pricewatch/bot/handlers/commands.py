@@ -41,6 +41,9 @@ from pricewatch.bot.keyboards import (
 from pricewatch.config import settings
 from pricewatch.domain.exceptions import VariantAmbiguousError
 from pricewatch.domain.models import CanonicalListing, Subscription
+from pricewatch.logging_setup import get_logger
+
+logger = get_logger("commands")
 from pricewatch.providers.amul import AmulProvider
 from pricewatch.providers.base import ProviderRegistry
 from pricewatch.services.amul_auto_order import AmulAutoOrderService
@@ -49,6 +52,7 @@ from pricewatch.services.chart_service import ChartService
 from pricewatch.services.check_orchestrator import CheckOrchestrator
 from pricewatch.services.discovery_service import DiscoveryService
 from pricewatch.services.multi_channel_notifier import notifier as multichannel_notifier
+from pricewatch.services.vision_extractor import vision_extractor
 from pricewatch.services.tracker_service import TrackerService
 from pricewatch.utils.time_utils import format_ist_datetime
 from pricewatch.validation.normalizer import parse_inr_to_paise
@@ -1294,4 +1298,63 @@ async def channels_command_handler(update: Update, context: ContextTypes.DEFAULT
             await update.effective_message.reply_html("⚠️ <b>Test alert failed.</b> Please verify your channel URL syntax.")
     else:
         await update.effective_message.reply_html("⚠️ Unknown subcommand. Use <code>/channels</code> to view usage.")
+
+
+async def photo_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle photos/screenshots to detect products and offer 1-click tracking and comparisons."""
+    if not update.effective_user or not update.effective_message or not update.message or not update.message.photo:
+        return
+
+    status_msg = await update.effective_message.reply_html(
+        "📸 <i>Analyzing product screenshot with AI Vision...</i>"
+    )
+
+    try:
+        photo = update.message.photo[-1]
+        photo_file = await photo.get_file()
+        img_bytes = await photo_file.download_as_bytearray()
+
+        product = await vision_extractor.extract_from_image_bytes(bytes(img_bytes))
+        if not product or not product.title:
+            await status_msg.edit_text(
+                "📸 <b>Screenshot received!</b>\n\n"
+                "We couldn't automatically read the product name from this image. "
+                "Please paste the product link directly or type the product name (e.g. <code>/compare Nakpro Whey</code>) to track it!",
+                parse_mode="HTML",
+            )
+            return
+
+        title = html.escape(product.title)
+        brand = f" ({html.escape(product.brand)})" if product.brand else ""
+        variant = f"\n🏷️ <b>Variant:</b> {html.escape(product.variant)}" if product.variant else ""
+        price = f"\n💰 <b>Price in Screenshot:</b> ₹{product.price_paise / 100:,.0f}" if product.price_paise else ""
+
+        # Trigger cross-store discovery for this product
+        discovery_svc: DiscoveryService = context.bot_data.get("discovery_service", DiscoveryService())
+        query = f"{product.title} {product.variant or ''}".strip()
+        cmp_result = await discovery_svc.compare_query(query=query, target_weight_g=product.weight_g)
+
+        lines = [
+            "📸 <b>Product Detected via AI Vision!</b>\n",
+            f"📦 <b>Product:</b> {title}{brand}{variant}{price}",
+        ]
+
+        if cmp_result and cmp_result.best_deal:
+            bd = cmp_result.best_deal
+            from pricewatch.validation.normalizer import format_paise_to_inr
+            p_str = format_paise_to_inr(bd.price_paise)
+            lines.append(f"\n🏆 <b>Best Live Deal Found:</b>\n👉 <b>{bd.store_name}:</b> <code>{p_str}</code> (🟢 <b>In Stock</b>)")
+
+        lines.append("\n<i>Tap below to compare all stores or track this product:</i>")
+
+        kb = build_comparison_keyboard(cmp_result)
+        await status_msg.edit_text("\n".join(lines), reply_markup=kb, parse_mode="HTML")
+
+    except Exception as exc:
+        logger.warning("Error processing photo message", error=str(exc))
+        await status_msg.edit_text(
+            "⚠️ <b>Could not process image.</b> Please paste the product link directly to track!",
+            parse_mode="HTML",
+        )
+
 

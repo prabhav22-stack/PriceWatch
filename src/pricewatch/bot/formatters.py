@@ -9,6 +9,7 @@ from pricewatch.domain.models import (
     Subscription,
     User,
 )
+from pricewatch.services.deal_scorer import DealScorer
 from pricewatch.utils.time_utils import (
     format_duration,
     format_ist_datetime,
@@ -99,6 +100,15 @@ def format_stepwise_product_preview(listing: CanonicalListing) -> str:
         lines.append(f"🏷️ <b>MRP:</b> <s>{mrp_str}</s> (<b>{disc}% OFF</b>)")
 
     lines.append(f"📊 <b>Availability:</b> <b>{stock_badge}</b>")
+
+    if listing.last_price_paise and listing.last_price_paise > 0:
+        deal_eval = DealScorer.evaluate_deal(
+            current_price_paise=listing.last_price_paise,
+            mrp_paise=listing.last_mrp_paise,
+        )
+        lines.append(f"🎯 <b>Deal Rating:</b> {deal_eval.rating_label}")
+        if deal_eval.is_fake_discount:
+            lines.append(f"⚠️ <i>{deal_eval.summary}</i>")
 
     if listing.last_in_stock_at:
         ist_time = format_ist_datetime(listing.last_in_stock_at)

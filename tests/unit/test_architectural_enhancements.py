@@ -144,7 +144,7 @@ async def test_fastapi_telegram_mini_app():
         html_resp = await client.get("/webapp/dashboard/42")
         assert html_resp.status_code == 200
         assert "Nutrabay Pro Whey" in html_resp.text
-        assert "chart.js" in html_resp.text.lower()
+        assert "lightweight-charts" in html_resp.text.lower()
         assert "telegram-web-app.js" in html_resp.text
 
 
