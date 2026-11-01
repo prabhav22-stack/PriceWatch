@@ -71,7 +71,7 @@ class VisionExtractor:
     ) -> Optional[VisionExtractedProduct]:
         """Send image to Gemini Multimodal Vision API and parse product specs."""
         b64_data = base64.b64encode(image_bytes).decode("utf-8")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={api_key}"
 
         prompt = (
             "Analyze this product screenshot or photo. "

@@ -365,7 +365,17 @@ async def compare_command_handler(update: Update, context: ContextTypes.DEFAULT_
     )
 
     try:
-        result = await discovery_service.compare_query(query_str)
+        from pricewatch.services.gemini_service import gemini_service
+        effective_query = query_str
+        if not query_str.startswith("http") and gemini_service.is_available:
+            try:
+                norm = await gemini_service.normalize_user_query(query_str)
+                if norm and norm.get("clean_query"):
+                    effective_query = norm["clean_query"]
+            except Exception:
+                pass
+
+        result = await discovery_service.compare_query(effective_query)
         report_text = format_comparison_report(result)
         kb = build_comparison_keyboard(result)
         await status_msg.edit_text(
@@ -444,7 +454,17 @@ async def instock_command_handler(update: Update, context: ContextTypes.DEFAULT_
     )
 
     try:
-        result = await discovery_service.compare_query(query_str)
+        from pricewatch.services.gemini_service import gemini_service
+        effective_query = query_str
+        if not query_str.startswith("http") and gemini_service.is_available:
+            try:
+                norm = await gemini_service.normalize_user_query(query_str)
+                if norm and norm.get("clean_query"):
+                    effective_query = norm["clean_query"]
+            except Exception:
+                pass
+
+        result = await discovery_service.compare_query(effective_query)
         report_text = format_instock_report(result)
         kb = build_instock_keyboard(result)
         await status_msg.edit_text(
