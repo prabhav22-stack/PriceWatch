@@ -88,6 +88,7 @@ class ResilientHttpClient:
         url: str,
         headers: Optional[Dict[str, str]] = None,
         validate_ssrf: bool = True,
+        timeout: Optional[float] = None,
     ) -> httpx.Response:
         """Execute async GET request."""
         if validate_ssrf:
@@ -98,8 +99,9 @@ class ResilientHttpClient:
         if headers:
             req_headers.update(headers)
 
+        req_timeout = timeout if timeout is not None else self.timeout
         try:
-            resp = await client.get(url, headers=req_headers)
+            resp = await client.get(url, headers=req_headers, timeout=req_timeout)
             return resp
         except httpx.HTTPError as exc:
             raise ExtractionError(f"HTTP request failed for {url}: {exc}") from exc

@@ -9,6 +9,7 @@ from rapidfuzz import fuzz
 KNOWN_BRANDS = [
     "nutrabay",
     "muscleblaze",
+    "koshaveda",
     "nakpro",
     "asitis",
     "as-it-is",
@@ -27,6 +28,10 @@ KNOWN_BRANDS = [
     "bepure",
     "fast&up",
     "amul",
+    "appleveda",
+    "upakarma",
+    "dabur",
+    "wellcore",
 ]
 
 # Marketing buzzwords to filter for clean comparison
@@ -127,16 +132,17 @@ def compute_match_score(
     c_b = candidate_brand or extract_brand(candidate_title)
 
     brand_bonus = 0.0
-    if q_b and c_b:
-        if q_b == c_b or (q_b in ("asitis", "as-it-is", "atom") and c_b in ("asitis", "as-it-is", "atom")):
-            brand_bonus = 0.15
-        else:
-            # Different explicit brands -> mismatch! e.g. Nutrabay vs MuscleBlaze
+    if q_b:
+        # If query explicitly targets a brand, candidate must match that brand
+        has_query_brand = (
+            (c_b and (c_b == q_b or (q_b in ("asitis", "as-it-is", "atom") and c_b in ("asitis", "as-it-is", "atom"))))
+            or (q_b in candidate_title.lower())
+        )
+        if not has_query_brand:
             return 0.2, False
-    elif q_b and not c_b:
-        # Check if candidate mentions query's brand
-        if q_b in candidate_title.lower():
-            brand_bonus = 0.10
+        brand_bonus = 0.15
+    elif c_b:
+        brand_bonus = 0.05
 
     # 3. Spec / Weight compatibility check
     spec_penalty = 0.0

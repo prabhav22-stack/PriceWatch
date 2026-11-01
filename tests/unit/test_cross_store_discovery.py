@@ -265,3 +265,53 @@ async def test_compare_callback_handler():
     assert "Multi-Store Price & Stock Comparison" in report
     assert "HyugaLife" in report
     assert "₹449" in report
+
+
+@pytest.mark.asyncio
+async def test_search_flipkart_parser():
+    from pricewatch.services.store_searchers import _search_flipkart_sync
+
+    sample_html = """
+    <html><body>
+    <div data-id="AYD123">
+        <a title="Nutrabay Shudh Himalayan Shilajit Resin 20g" href="/nutrabay-shilajit/p/itm123"></a>
+        <div class="Nx9bqj">₹499</div>
+    </div>
+    </body></html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = sample_html
+
+    with patch("curl_cffi.requests.get", return_value=mock_resp):
+        deals = _search_flipkart_sync("Nutrabay Shilajit 20g", target_weight_g=20)
+        assert len(deals) == 1
+        assert deals[0].store_name == "Flipkart"
+        assert deals[0].price_paise == 49900
+        assert deals[0].available is True
+        assert "itm123" in deals[0].url
+
+
+@pytest.mark.asyncio
+async def test_search_amazon_parser():
+    from pricewatch.services.store_searchers import _search_amazon_sync
+
+    sample_html = """
+    <html><body>
+    <div data-component-type="s-search-result" data-asin="B012345678">
+        <h2><span>Nakpro Perform Whey Protein 1kg</span></h2>
+        <span class="a-price"><span class="a-offscreen">₹2,089</span></span>
+    </div>
+    </body></html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = sample_html
+
+    with patch("curl_cffi.requests.get", return_value=mock_resp):
+        deals = _search_amazon_sync("Nakpro Perform Whey 1kg", target_weight_g=1000)
+        assert len(deals) == 1
+        assert deals[0].store_name == "Amazon.in"
+        assert deals[0].price_paise == 208900
+        assert "B012345678" in deals[0].url
+
