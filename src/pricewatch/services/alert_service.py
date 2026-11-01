@@ -347,6 +347,33 @@ class AlertService:
                 )
 
             if not alert_type:
+                # If non-Amul tracked product is Out of Stock, check if it's found in stock elsewhere!
+                if listing.provider_code != "amul" and quote.available is False and sub.notify_on_restock and sub.alert_rearmed:
+                    try:
+                        from pricewatch.services.discovery_service import DiscoveryService
+                        disc_svc = DiscoveryService()
+                        alt_deal = await disc_svc.find_in_stock_alternative(listing)
+                        if alt_deal and alt_deal.available and alt_deal.url:
+                            if self.bot:
+                                from pricewatch.bot.formatters import format_cross_store_alert
+                                from pricewatch.bot.keyboards import build_cross_store_alert_keyboard
+                                alt_text = format_cross_store_alert(listing, alt_deal)
+                                alt_kb = build_cross_store_alert_keyboard(listing.id, alt_deal)
+                                await self.bot.send_message(
+                                    chat_id=sub.telegram_id,
+                                    text=alt_text,
+                                    reply_markup=alt_kb,
+                                    parse_mode="HTML",
+                                    disable_web_page_preview=True,
+                                )
+                                await self.repo.update_alert_state(
+                                    subscription_id=sub.id,
+                                    last_alerted_price_paise=alt_deal.price_paise,
+                                    alert_rearmed=False,
+                                )
+                                alerts_sent += 1
+                    except Exception as disc_err:
+                        logger.debug("Failed checking alternative in-stock stores in alert_service", error=str(disc_err))
                 continue
 
             # 2. Phase 1: Outbox row with deterministic idempotency key

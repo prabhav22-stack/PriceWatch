@@ -593,4 +593,184 @@ async def test_offline_ocr_extractor_on_screenshot():
         assert "Nutrabay" in product.title or (product.brand and "nutrabay" in product.brand.lower())
 
 
+@pytest.mark.asyncio
+async def test_check_command_handler_shows_alternative_in_stock():
+    from pricewatch.bot.handlers.commands import check_command_handler
+    from pricewatch.domain.models import PriceQuote
+    from pricewatch.services.check_orchestrator import CheckResult
+
+    repo = MemoryRepository()
+    listing = CanonicalListing(
+        id=99,
+        provider_code="nutrabay",
+        external_product_id="nb99",
+        canonical_url="https://nutrabay.com/item",
+        product_title="Nutrabay Pure Shilajit",
+        last_price_paise=49900,
+        last_available=False,
+    )
+    repo.listings[99] = listing
+    sub = Subscription(id=1, telegram_id=888, listing_id=99, target_price_paise=45000)
+    await repo.create_or_update_subscription(sub)
+
+    tracker_service = TrackerService(repo, repo, repo)
+    alt_deal = StoreDeal(
+        store_name="Flipkart",
+        product_title="Nutrabay Shilajit Resin 20g",
+        price_paise=49900,
+        available=True,
+        url="https://flipkart.com/shilajit/99",
+    )
+    mock_disc_svc = MagicMock()
+    mock_disc_svc.find_in_stock_alternative = AsyncMock(return_value=alt_deal)
+
+    update = MagicMock()
+    update.effective_user.id = 888
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    update.effective_message.reply_html = AsyncMock(return_value=status_msg)
+
+    context = MagicMock()
+    context.bot_data = {
+        "tracker_service": tracker_service,
+        "discovery_service": mock_disc_svc,
+    }
+
+    mock_check_res = CheckResult(
+        listing_id=99,
+        quote=PriceQuote(
+            external_product_id="nb99",
+            external_variant_id="nb99",
+            extraction_method="test",
+            price_paise=49900,
+            available=False,
+        ),
+        decision=None,
+        is_verified=True,
+        success=True,
+    )
+
+    with patch("pricewatch.bot.handlers.commands.CheckOrchestrator") as mock_orch_cls:
+        mock_orch = MagicMock()
+        mock_orch.check_listing = AsyncMock(return_value=mock_check_res)
+        mock_orch_cls.return_value = mock_orch
+
+        await check_command_handler(update, context)
+
+    status_msg.edit_text.assert_called_once()
+    output_text = status_msg.edit_text.call_args[0][0]
+    assert "Live Stock & Price Check" in output_text
+    assert "Out of Stock" in output_text
+    assert "<b>IN STOCK on Flipkart:</b> <code>₹499</code>" in output_text
+    assert "https://flipkart.com/shilajit/99" in output_text
+
+
+@pytest.mark.asyncio
+async def test_instock_command_handler_with_listing_id():
+    repo = MemoryRepository()
+    listing = CanonicalListing(
+        id=77,
+        provider_code="nutrabay",
+        external_product_id="nb77",
+        canonical_url="https://nutrabay.com/item",
+        product_title="Nutrabay Pure Shilajit",
+        last_price_paise=49900,
+        last_available=False,
+    )
+    repo.listings[77] = listing
+    tracker_service = TrackerService(repo, repo, repo)
+
+    mock_deal = StoreDeal(
+        store_name="Flipkart",
+        product_title="Nutrabay Pure Shilajit Resin 20g",
+        price_paise=49900,
+        available=True,
+        url="https://flipkart.com/shilajit/77",
+        is_best_deal=True,
+    )
+    mock_result = ComparisonResult(
+        query_title="Nutrabay Pure Shilajit",
+        target_weight_g=20,
+        best_deal=mock_deal,
+        deals=[mock_deal],
+        stores_checked=1,
+    )
+    mock_disc_svc = MagicMock()
+    mock_disc_svc.compare_listing = AsyncMock(return_value=mock_result)
+
+    update = MagicMock()
+    update.effective_user.id = 12345
+    update.effective_message.text = "/instock_77"
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    update.effective_message.reply_html = AsyncMock(return_value=status_msg)
+
+    context = MagicMock()
+    context.args = []
+    context.bot_data = {
+        "tracker_service": tracker_service,
+        "discovery_service": mock_disc_svc,
+    }
+
+    await instock_command_handler(update, context)
+
+    status_msg.edit_text.assert_called_once()
+    edited_text = status_msg.edit_text.call_args[0][0]
+    assert "Instant Stock Finder" in edited_text
+    assert "Flipkart" in edited_text
+
+
+@pytest.mark.asyncio
+async def test_stk_callback_handler():
+    repo = MemoryRepository()
+    listing = CanonicalListing(
+        id=66,
+        provider_code="nutrabay",
+        external_product_id="nb66",
+        canonical_url="https://nutrabay.com/item",
+        product_title="Nutrabay Pure Shilajit",
+        last_price_paise=49900,
+        last_available=False,
+    )
+    repo.listings[66] = listing
+    tracker_service = TrackerService(repo, repo, repo)
+
+    mock_deal = StoreDeal(
+        store_name="Flipkart",
+        product_title="Nutrabay Pure Shilajit Resin 20g",
+        price_paise=49900,
+        available=True,
+        url="https://flipkart.com/shilajit/66",
+        is_best_deal=True,
+    )
+    mock_result = ComparisonResult(
+        query_title="Nutrabay Pure Shilajit",
+        target_weight_g=20,
+        best_deal=mock_deal,
+        deals=[mock_deal],
+        stores_checked=1,
+    )
+    mock_disc_svc = MagicMock()
+    mock_disc_svc.compare_listing = AsyncMock(return_value=mock_result)
+
+    update = MagicMock()
+    query = update.callback_query
+    query.data = "stk:66"
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {
+        "tracker_service": tracker_service,
+        "discovery_service": mock_disc_svc,
+    }
+
+    await callback_query_dispatcher(update, context)
+
+    query.edit_message_text.assert_called_once()
+    text = query.edit_message_text.call_args[0][0]
+    assert "Instant Stock Finder" in text
+    assert "Flipkart" in text
+
+
 

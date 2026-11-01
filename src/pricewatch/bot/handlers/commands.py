@@ -57,7 +57,7 @@ from pricewatch.services.multi_channel_notifier import notifier as multichannel_
 from pricewatch.services.vision_extractor import vision_extractor
 from pricewatch.services.tracker_service import TrackerService
 from pricewatch.utils.time_utils import format_ist_datetime
-from pricewatch.validation.normalizer import parse_inr_to_paise
+from pricewatch.validation.normalizer import format_paise_to_inr, parse_inr_to_paise
 
 
 _PINCODE_REGEX = re.compile(r"^\d{6}$")
@@ -383,12 +383,45 @@ async def compare_command_handler(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def instock_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /instock <product name> to instantly search where a product is currently in stock."""
+    """Handle /instock <product name or tracked id> to instantly search where a product is in stock."""
     if not update.effective_user or not update.effective_message:
         return
 
     discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+    tracker_service: Optional[TrackerService] = context.bot_data.get("tracker_service")
     args = context.args if isinstance(context.args, list) else []
+
+    # Check if invoked via shorthand /instock_<id> or /instock <id>
+    raw_text = (
+        update.effective_message.text
+        if isinstance(getattr(update.effective_message, "text", None), str)
+        else ""
+    )
+    m_id = re.search(r"^/instock_(\d+)", raw_text) if raw_text else None
+    listing_id = int(m_id.group(1)) if m_id else (int(args[0]) if len(args) == 1 and args[0].isdigit() else None)
+
+    if listing_id and tracker_service:
+        listing = await tracker_service.get_listing(listing_id)
+        if listing:
+            title_display = html.escape(listing.product_title)
+            status_msg = await update.effective_message.reply_html(
+                f"⚡ <i>Checking real-time stock across all stores for tracked product:</i>\n<b>{title_display}</b>..."
+            )
+            try:
+                result = await discovery_service.compare_listing(listing)
+                report_text = format_instock_report(result)
+                kb = build_instock_keyboard(result)
+                await status_msg.edit_text(
+                    report_text,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                )
+                return
+            except Exception as exc:
+                safe_exc = html.escape(str(exc))
+                await status_msg.edit_text(f"❌ <b>Stock check error:</b>\n{safe_exc}", parse_mode="HTML")
+                return
 
     if not args:
         context.user_data["awaiting_instock_query"] = True
@@ -675,7 +708,21 @@ async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                         time_info = f" (Last in stock: {format_ist_datetime(dt)})"
                     stock_badge = f"🔴 Out of Stock{time_info}"
 
-                results_lines.append(f"{i}. <b>{title}</b>\n   {stock_badge} | 💰 {price_str}")
+                    # Cross-store in-stock check: Automatically discover if product is in stock elsewhere!
+                    alt_info = ""
+                    try:
+                        discovery_svc: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+                        alt_deal = await discovery_svc.find_in_stock_alternative(listing)
+                        if alt_deal and alt_deal.available and alt_deal.url:
+                            alt_price = format_paise_to_inr(alt_deal.price_paise)
+                            alt_info = (
+                                f"\n   👉 🟢 <b>IN STOCK on {alt_deal.store_name}:</b> "
+                                f"<code>{alt_price}</code> (<a href='{alt_deal.url}'>Direct Buy Link</a>)"
+                            )
+                    except Exception:
+                        pass
+
+                    results_lines.append(f"{i}. <b>{title}</b>\n   {stock_badge} | 💰 {price_str}{alt_info}")
             else:
                 err_text = html.escape(check_res.error or "Check failed")
                 results_lines.append(f"{i}. <b>{title}</b>\n   ⚠️ Check failed: {err_text}")
@@ -684,7 +731,12 @@ async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     results_lines.append("\n✅ <i>All tracked items refreshed with live store data!</i>")
     kb = build_action_nav_keyboard("📋 View Tracked List", "nav:tracked", "⚙️ Alert Settings", "cfg:refresh")
-    await status_msg.edit_text("\n".join(results_lines), reply_markup=kb, parse_mode="HTML")
+    await status_msg.edit_text(
+        "\n".join(results_lines),
+        reply_markup=kb,
+        parse_mode="HTML",
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
 
 
 async def amul_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

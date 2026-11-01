@@ -414,10 +414,11 @@ def format_subscription_list(items: List[Tuple[Subscription, CanonicalListing]])
             )
         else:
             status_icon = "🟢" if listing.last_available else "🔴 OOS"
+            oos_hint = f" | /instock_{listing.id}" if listing.last_available is False else ""
             lines.append(
                 f"{i}. <b>{listing.product_title}</b>{variant}\n"
                 f"   {status_icon} Current: <code>{price_str}</code> | Target: <code>{target_str}</code>\n"
-                f"   🆔 ID: <code>{listing.id}</code> | /history_{listing.id} | /untrack_{listing.id}"
+                f"   🆔 ID: <code>{listing.id}</code> | /history_{listing.id} | /untrack_{listing.id}{oos_hint}"
             )
         lines.append("")
 

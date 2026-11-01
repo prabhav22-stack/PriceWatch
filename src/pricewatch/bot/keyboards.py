@@ -106,7 +106,8 @@ def build_tracking_mode_keyboard(
             InlineKeyboardButton("🎯 Set Custom Target Price", callback_data=f"trk_mode:{listing_id}:target"),
         ],
         [
-            InlineKeyboardButton("🔍 Compare Across Stores", callback_data=f"cmp:{listing_id}"),
+            InlineKeyboardButton("⚡ Check Live Stock", callback_data=f"stk:{listing_id}"),
+            InlineKeyboardButton("🔍 Compare Stores", callback_data=f"cmp:{listing_id}"),
         ],
     ]
     if is_nutrabay:
@@ -156,7 +157,8 @@ def build_listing_card_keyboard(listing_id: int, is_nutrabay: bool = False) -> I
             InlineKeyboardButton("🗑️ Untrack", callback_data=f"del:confirm:{listing_id}"),
         ],
         [
-            InlineKeyboardButton("🔍 Compare Across Stores", callback_data=f"cmp:{listing_id}"),
+            InlineKeyboardButton("⚡ Check Live Stock", callback_data=f"stk:{listing_id}"),
+            InlineKeyboardButton("🔍 Compare Stores", callback_data=f"cmp:{listing_id}"),
         ],
     ]
     webapp_url = os.getenv("WEBAPP_URL")

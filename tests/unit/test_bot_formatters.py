@@ -77,6 +77,21 @@ def test_subscription_list_with_items():
     assert "/untrack_99" in text
 
 
+def test_subscription_list_with_oos_item_includes_instock_shortcut():
+    listing = CanonicalListing(
+        id=88,
+        provider_code="nutrabay",
+        external_product_id="nb88",
+        canonical_url="https://nutrabay.com/item",
+        product_title="Nutrabay Shilajit",
+        last_price_paise=49900,
+        last_available=False,
+    )
+    sub = Subscription(id=2, telegram_id=123, listing_id=88, target_price_paise=45000)
+    text = format_subscription_list([(sub, listing)])
+    assert "/instock_88" in text
+
+
 def test_stepwise_product_preview_formatter():
     from pricewatch.bot.formatters import format_stepwise_product_preview
     listing = CanonicalListing(
