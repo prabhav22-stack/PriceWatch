@@ -203,3 +203,17 @@ class DiscoveryService:
             deals=final_deals,
             stores_checked=len(seen_stores),
         )
+
+    async def find_in_stock_alternative(self, listing: CanonicalListing) -> Optional[StoreDeal]:
+        """Check alternative trusted stores for an identical product that is currently in stock."""
+        comp_res = await self.compare_listing(listing)
+        curr_store = listing.provider_code.lower()
+
+        # Find first in-stock deal on an alternative store
+        for deal in comp_res.deals:
+            if deal.available and deal.price_paise > 0 and deal.url:
+                deal_store = deal.store_name.lower().replace(" direct", "")
+                if deal_store != curr_store and "amul" not in deal_store:
+                    return deal
+        return None
+

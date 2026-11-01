@@ -14,6 +14,7 @@ from pricewatch.bot.formatters import (
     format_amul_tracking_confirmed,
     format_auto_order_overview,
     format_comparison_report,
+    format_cross_store_alert,
     format_help_message,
     format_settings_menu,
     format_stepwise_product_preview,
@@ -26,6 +27,7 @@ from pricewatch.bot.keyboards import (
     build_amul_category_keyboard,
     build_category_navigation_keyboard,
     build_comparison_keyboard,
+    build_cross_store_alert_keyboard,
     build_listing_card_keyboard,
     build_pincode_keyboard,
     build_repeat_keyboard,
@@ -296,6 +298,16 @@ async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         conf_text = format_tracking_confirmation(listing, sub)
         await status_msg.edit_text(conf_text, parse_mode="HTML")
+        if listing.last_available is False:
+            import asyncio
+            asyncio.create_task(
+                notify_if_available_elsewhere(
+                    chat_id=update.effective_chat.id,
+                    user_id=update.effective_user.id,
+                    listing=listing,
+                    context=context,
+                )
+            )
 
     except VariantAmbiguousError as amb_err:
         variants = amb_err.variants
@@ -1025,6 +1037,16 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             conf_text = format_tracking_confirmation(listing, sub)
             kb = build_listing_card_keyboard(listing.id, is_nutrabay=(listing.provider_code == "nutrabay"))
             await update.effective_message.reply_html(conf_text, reply_markup=kb)
+            if listing.last_available is False:
+                import asyncio
+                asyncio.create_task(
+                    notify_if_available_elsewhere(
+                        chat_id=update.effective_chat.id,
+                        user_id=update.effective_user.id,
+                        listing=listing,
+                        context=context,
+                    )
+                )
             return
         except Exception as exc:
             await update.effective_message.reply_html(f"❌ Failed to set target price: {exc}")
@@ -1075,6 +1097,33 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=kb,
         )
         return
+
+
+async def notify_if_available_elsewhere(
+    chat_id: int,
+    user_id: int,
+    listing: CanonicalListing,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Asynchronously checks other stores and alerts the user if an out-of-stock item is in stock elsewhere."""
+    if listing.last_available is not False:
+        return
+
+    discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+    try:
+        alt_deal = await discovery_service.find_in_stock_alternative(listing)
+        if alt_deal and alt_deal.available and alt_deal.url:
+            context.user_data[f"alt_deal_{listing.id}"] = alt_deal
+            text = format_cross_store_alert(listing, alt_deal)
+            kb = build_cross_store_alert_keyboard(listing.id, alt_deal)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+    except Exception:
+        pass
 
 
 async def _inspect_url_and_prompt_modes(

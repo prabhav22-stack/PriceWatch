@@ -35,7 +35,7 @@ from pricewatch.bot.keyboards import (
     build_tracking_mode_keyboard,
     build_welcome_keyboard,
 )
-from pricewatch.domain.models import CanonicalListing, Subscription
+from pricewatch.domain.models import CanonicalListing, StoreDeal, Subscription
 from pricewatch.logging_setup import get_logger
 from pricewatch.providers.amul import AMUL_CATEGORIES, AmulProvider
 from pricewatch.services.amul_stock_tracker import AmulStockTracker
@@ -120,6 +120,17 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             conf_text = format_tracking_mode_confirmation(listing, saved_sub, mode)
             kb = build_listing_card_keyboard(listing_id, is_nutrabay=(listing.provider_code == "nutrabay"))
             await query.edit_message_text(conf_text, reply_markup=kb, parse_mode="HTML")
+            if not is_in_stock:
+                import asyncio
+                from pricewatch.bot.handlers.commands import notify_if_available_elsewhere
+                asyncio.create_task(
+                    notify_if_available_elsewhere(
+                        chat_id=query.message.chat_id,
+                        user_id=user_id,
+                        listing=listing,
+                        context=context,
+                    )
+                )
             return
 
         # 1. Stepwise target price selection: tgt:<listing_id>:<target_paise>
@@ -137,6 +148,17 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             conf_text = format_tracking_confirmation(listing, sub)
             kb = build_listing_card_keyboard(listing_id, is_nutrabay=(listing.provider_code == "nutrabay"))
             await query.edit_message_text(conf_text, reply_markup=kb, parse_mode="HTML")
+            if listing.last_available is False:
+                import asyncio
+                from pricewatch.bot.handlers.commands import notify_if_available_elsewhere
+                asyncio.create_task(
+                    notify_if_available_elsewhere(
+                        chat_id=query.message.chat_id,
+                        user_id=user_id,
+                        listing=listing,
+                        context=context,
+                    )
+                )
             return
 
         # 2. Custom target price prompt: tgt_custom:<listing_id>
@@ -258,6 +280,62 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 logger.warning("Error running cross-store comparison callback", error=str(exc))
                 await query.edit_message_text(
                     f"❌ <b>Comparison failed:</b> {exc}",
+                    parse_mode="HTML",
+                )
+            return
+
+        # 3d. Switch tracking to alternative in-stock store: sw_trk:<listing_id>
+        if data.startswith("sw_trk:"):
+            old_listing_id = int(data.split(":")[1])
+            alt_deal: Optional[StoreDeal] = context.user_data.get(f"alt_deal_{old_listing_id}")
+
+            if not alt_deal:
+                old_listing = await tracker_service.get_listing(old_listing_id)
+                if old_listing:
+                    discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+                    alt_deal = await discovery_service.find_in_stock_alternative(old_listing)
+
+            if not alt_deal or not alt_deal.url:
+                await query.answer("Could not locate store link to switch.", show_alert=True)
+                return
+
+            await query.answer(f"Switching tracking to {alt_deal.store_name}...")
+
+            # Untrack old out-of-stock listing for this user
+            await tracker_service.untrack_product(user_id, old_listing_id)
+
+            try:
+                new_listing = await tracker_service.resolve_and_preview_url(
+                    telegram_id=user_id,
+                    url=alt_deal.url,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                sub = Subscription(
+                    telegram_id=user_id,
+                    listing_id=new_listing.id,
+                    target_price_paise=new_listing.last_price_paise or alt_deal.price_paise,
+                    notify_on_restock=True,
+                    is_active=True,
+                    alert_rearmed=True,
+                )
+                await tracker_service.sub_repo.create_or_update_subscription(sub)
+
+                from pricewatch.validation.normalizer import format_paise_to_inr
+                price_str = format_paise_to_inr(new_listing.last_price_paise or alt_deal.price_paise)
+                conf_msg = (
+                    f"✅ <b>Successfully Switched Tracking to {alt_deal.store_name}!</b>\n\n"
+                    f"📦 <b>Product:</b> {new_listing.product_title}\n"
+                    f"💰 <b>Current Price:</b> <code>{price_str}</code> (🟢 <b>In Stock</b>)\n\n"
+                    f"<i>PriceWatch is now tracking this product on {alt_deal.store_name} and will alert you on price drops!</i>"
+                )
+                kb = build_listing_card_keyboard(new_listing.id)
+                await query.edit_message_text(conf_msg, reply_markup=kb, parse_mode="HTML")
+            except Exception as exc:
+                logger.warning("Failed to auto-switch tracking to alternative", error=str(exc))
+                await query.edit_message_text(
+                    f"⚠️ <b>Could not automatically switch tracking:</b>\n{exc}\n\n"
+                    f"You can track it directly using this link:\n<code>{alt_deal.url}</code>",
                     parse_mode="HTML",
                 )
             return

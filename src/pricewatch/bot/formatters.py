@@ -229,6 +229,36 @@ def format_comparison_report(result: ComparisonResult) -> str:
     return "\n".join(lines)
 
 
+def format_cross_store_alert(listing: CanonicalListing, alternative: StoreDeal) -> str:
+    """Format notification when an out-of-stock product is discovered in stock elsewhere."""
+    curr_store = listing.provider_code.title()
+    alt_price = format_paise_to_inr(alternative.price_paise)
+    mrp_str = (
+        f" <s>{format_paise_to_inr(alternative.mrp_paise)}</s>"
+        if alternative.mrp_paise and alternative.mrp_paise > alternative.price_paise
+        else ""
+    )
+
+    lines = [
+        f"🔔 <b>Found In Stock on {alternative.store_name}!</b>",
+        "",
+        f"While your tracked item is currently 🔴 <b>Out of Stock on {curr_store}</b>, our cross-store engine found the same product 🟢 <b>In Stock</b> elsewhere:",
+        "",
+        f"🏪 <b>Store:</b> <b>{alternative.store_name}</b>",
+        f"💰 <b>Price:</b> <code>{alt_price}</code>{mrp_str} (🟢 <b>In Stock</b>)",
+        f"📦 <b>Title:</b> {alternative.product_title}",
+    ]
+    if alternative.savings_paise and alternative.savings_paise > 0:
+        sav = format_paise_to_inr(alternative.savings_paise)
+        lines.append(f"💡 <i>Save {sav} compared to {curr_store}!</i>")
+
+    lines.extend([
+        "",
+        "<i>💡 You can purchase it directly or switch tracking below:</i>",
+    ])
+    return "\n".join(lines)
+
+
 def format_tracking_mode_confirmation(listing: CanonicalListing, sub: Subscription, mode: str) -> str:
     price_str = format_paise_to_inr(listing.last_price_paise)
     mrp_str = format_paise_to_inr(listing.last_mrp_paise) if listing.last_mrp_paise else None

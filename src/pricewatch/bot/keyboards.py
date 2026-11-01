@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import List, Optional, Sequence, Set
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from pricewatch.domain.models import CanonicalListing, ComparisonResult, User, VariantOption
+from pricewatch.domain.models import CanonicalListing, ComparisonResult, StoreDeal, User, VariantOption
 from pricewatch.validation.normalizer import format_paise_to_inr
 
 
@@ -191,6 +191,27 @@ def build_comparison_keyboard(
     action_row.append(InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"))
     rows.append(action_row)
 
+    return InlineKeyboardMarkup(rows)
+
+
+def build_cross_store_alert_keyboard(
+    listing_id: int,
+    alternative: StoreDeal,
+) -> InlineKeyboardMarkup:
+    """Keyboard for cross-store alternative in-stock discovery alert."""
+    alt_price = format_paise_to_inr(alternative.price_paise)
+    rows = [
+        [
+            InlineKeyboardButton(f"🛒 Buy on {alternative.store_name} ({alt_price})", url=alternative.url),
+        ],
+        [
+            InlineKeyboardButton(f"⚡ Switch Tracking to {alternative.store_name}", callback_data=f"sw_trk:{listing_id}"),
+        ],
+        [
+            InlineKeyboardButton("🔍 View All Stores", callback_data=f"cmp:{listing_id}"),
+            InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"),
+        ],
+    ]
     return InlineKeyboardMarkup(rows)
 
 

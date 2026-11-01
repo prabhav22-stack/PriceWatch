@@ -11,7 +11,7 @@ from pricewatch.bot.keyboards import (
     build_listing_card_keyboard,
     build_tracking_mode_keyboard,
 )
-from pricewatch.domain.models import CanonicalListing, ComparisonResult, StoreDeal
+from pricewatch.domain.models import CanonicalListing, ComparisonResult, StoreDeal, Subscription
 from pricewatch.repositories.memory_repo import MemoryRepository
 from pricewatch.services.discovery_matcher import (
     clean_product_tokens,
@@ -314,4 +314,135 @@ async def test_search_amazon_parser():
         assert deals[0].store_name == "Amazon.in"
         assert deals[0].price_paise == 208900
         assert "B012345678" in deals[0].url
+
+
+@pytest.mark.asyncio
+async def test_find_in_stock_alternative_and_notify():
+    from pricewatch.bot.formatters import format_cross_store_alert
+    from pricewatch.bot.handlers.commands import notify_if_available_elsewhere
+
+    listing = CanonicalListing(
+        id=99,
+        provider_code="nutrabay",
+        external_product_id="9303750",
+        external_variant_id="4609770",
+        canonical_url="https://nutrabay.com/product/shilajit",
+        product_title="Nutrabay Pure Shilajit",
+        variant_title="20g",
+        last_price_paise=49900,
+        last_available=False,
+    )
+    alt_deal = StoreDeal(
+        store_name="Flipkart",
+        product_title="Nutrabay Shudh Shilajit Resin 20g",
+        price_paise=49900,
+        available=True,
+        url="https://flipkart.com/shilajit/p/123",
+    )
+
+    alert_msg = format_cross_store_alert(listing, alt_deal)
+    assert "Found In Stock on Flipkart!" in alert_msg
+    assert "Out of Stock on Nutrabay" in alert_msg
+    assert "₹499" in alert_msg
+
+    # Test notify_if_available_elsewhere
+    mock_discovery = MagicMock()
+    mock_discovery.find_in_stock_alternative = AsyncMock(return_value=alt_deal)
+
+    context = MagicMock()
+    context.bot_data = {"discovery_service": mock_discovery}
+    context.user_data = {}
+    context.bot.send_message = AsyncMock()
+
+    await notify_if_available_elsewhere(
+        chat_id=1234,
+        user_id=5678,
+        listing=listing,
+        context=context,
+    )
+
+    context.bot.send_message.assert_called_once()
+    sent_text = context.bot.send_message.call_args[1]["text"]
+    assert "Found In Stock on Flipkart!" in sent_text
+    assert context.user_data.get("alt_deal_99") == alt_deal
+
+
+@pytest.mark.asyncio
+async def test_switch_tracking_callback():
+    repo = MemoryRepository()
+    old_listing = CanonicalListing(
+        id=55,
+        provider_code="nutrabay",
+        external_product_id="9303750",
+        external_variant_id="4609770",
+        canonical_url="https://nutrabay.com/product/shilajit",
+        product_title="Nutrabay Pure Shilajit",
+        variant_title="20g",
+        last_price_paise=49900,
+        last_available=False,
+    )
+    new_listing = CanonicalListing(
+        id=56,
+        provider_code="flipkart",
+        external_product_id="itm123",
+        external_variant_id="default",
+        canonical_url="https://flipkart.com/shilajit/p/123",
+        product_title="Nutrabay Shudh Shilajit Resin 20g",
+        variant_title="20g",
+        last_price_paise=49900,
+        last_available=True,
+    )
+    repo.listings[55] = old_listing
+    repo.listings[56] = new_listing
+
+    # User initially subscribed to old listing
+    sub = Subscription(
+        id=1,
+        telegram_id=777,
+        listing_id=55,
+        target_price_paise=49900,
+        is_active=True,
+    )
+    await repo.create_or_update_subscription(sub)
+
+    tracker_service = TrackerService(repo, repo, repo)
+    tracker_service.resolve_and_preview_url = AsyncMock(return_value=new_listing)
+
+    alt_deal = StoreDeal(
+        store_name="Flipkart",
+        product_title="Nutrabay Shudh Shilajit Resin 20g",
+        price_paise=49900,
+        available=True,
+        url="https://flipkart.com/shilajit/p/123",
+    )
+
+    update = MagicMock()
+    query = update.callback_query
+    query.data = "sw_trk:55"
+    query.from_user.id = 777
+    query.from_user.username = "tester"
+    query.from_user.first_name = "Alex"
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"tracker_service": tracker_service}
+    context.user_data = {"alt_deal_55": alt_deal}
+
+    await callback_query_dispatcher(update, context)
+
+    # Old subscription must be inactive
+    old_subs = [s for s in repo.subscriptions.values() if s.telegram_id == 777 and s.listing_id == 55]
+    assert len(old_subs) == 1
+    assert old_subs[0].is_active is False
+
+    # New subscription on listing 56 must be active
+    new_subs = [s for s in repo.subscriptions.values() if s.telegram_id == 777 and s.listing_id == 56]
+    assert len(new_subs) == 1
+    assert new_subs[0].is_active is True
+
+    query.edit_message_text.assert_called_once()
+    conf_msg = query.edit_message_text.call_args[0][0]
+    assert "Successfully Switched Tracking to Flipkart!" in conf_msg
+
 
