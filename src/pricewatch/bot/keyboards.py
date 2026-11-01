@@ -212,6 +212,30 @@ def build_comparison_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
+def build_instock_keyboard(
+    result: ComparisonResult,
+) -> InlineKeyboardMarkup:
+    """Buttons for instant in-stock search results."""
+    rows: List[List[InlineKeyboardButton]] = []
+
+    # Direct store purchase buttons for in-stock stores (up to top 4)
+    in_stock_deals = [d for d in result.deals if d.available and d.url]
+    for d in in_stock_deals[:4]:
+        p_str = format_paise_to_inr(d.price_paise) if d.price_paise else ""
+        label = f"🛒 Buy on {d.store_name} ({p_str})"
+        rows.append([InlineKeyboardButton(label, url=d.url)])
+
+    action_row = []
+    # If out of stock, offer 1-click tracking or compare
+    if not in_stock_deals and result.deals:
+        action_row.append(InlineKeyboardButton("🔔 Track Restock Alert", callback_data="trk:start"))
+    action_row.append(InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"))
+    action_row.append(InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"))
+    rows.append(action_row)
+
+    return InlineKeyboardMarkup(rows)
+
+
 def build_cross_store_alert_keyboard(
     listing_id: int,
     alternative: StoreDeal,

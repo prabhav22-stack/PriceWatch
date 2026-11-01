@@ -2,7 +2,7 @@
 
 import html
 import re
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
 from telegram.ext import ContextTypes
 
 from pricewatch.bot.formatters import (
@@ -16,6 +16,7 @@ from pricewatch.bot.formatters import (
     format_comparison_report,
     format_cross_store_alert,
     format_help_message,
+    format_instock_report,
     format_settings_menu,
     format_stepwise_product_preview,
     format_subscription_list,
@@ -28,6 +29,7 @@ from pricewatch.bot.keyboards import (
     build_category_navigation_keyboard,
     build_comparison_keyboard,
     build_cross_store_alert_keyboard,
+    build_instock_keyboard,
     build_listing_card_keyboard,
     build_pincode_keyboard,
     build_repeat_keyboard,
@@ -366,11 +368,62 @@ async def compare_command_handler(update: Update, context: ContextTypes.DEFAULT_
         result = await discovery_service.compare_query(query_str)
         report_text = format_comparison_report(result)
         kb = build_comparison_keyboard(result)
-        await status_msg.edit_text(report_text, reply_markup=kb, parse_mode="HTML")
+        await status_msg.edit_text(
+            report_text,
+            reply_markup=kb,
+            parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
     except Exception as exc:
         safe_exc = html.escape(str(exc))
         await status_msg.edit_text(
             f"❌ <b>Price comparison error:</b>\n{safe_exc}\n\nPlease try again with a simpler product name or direct link.",
+            parse_mode="HTML",
+        )
+
+
+async def instock_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /instock <product name> to instantly search where a product is currently in stock."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+    args = context.args if isinstance(context.args, list) else []
+
+    if not args:
+        context.user_data["awaiting_instock_query"] = True
+        kb = build_action_nav_keyboard("❌ Cancel", "trk:cancel", "🏠 Main Menu", "nav:home", include_home=False)
+        await update.effective_message.reply_html(
+            "⚡ <b>Instant Stock Finder</b>\n\n"
+            "Please send the product name you want to check live stock for.\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>Nutrabay Shilajit</code>\n"
+            "• <code>Amul Whey Protein</code>\n"
+            "• <code>Nakpro Malai Kulfi Whey</code>\n"
+            "• <code>MuscleBlaze Biozyme Gold 1kg</code>",
+            reply_markup=kb,
+        )
+        return
+
+    query_str = " ".join(args).strip()
+    status_msg = await update.effective_message.reply_html(
+        f"⚡ <i>Checking real-time stock across stores for:</i>\n<b>{html.escape(query_str)}</b>..."
+    )
+
+    try:
+        result = await discovery_service.compare_query(query_str)
+        report_text = format_instock_report(result)
+        kb = build_instock_keyboard(result)
+        await status_msg.edit_text(
+            report_text,
+            reply_markup=kb,
+            parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
+    except Exception as exc:
+        safe_exc = html.escape(str(exc))
+        await status_msg.edit_text(
+            f"❌ <b>Stock check error:</b>\n{safe_exc}\n\nPlease try again with a simpler product name.",
             parse_mode="HTML",
         )
 
@@ -1067,12 +1120,42 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             result = await discovery_service.compare_query(text)
             report_text = format_comparison_report(result)
             kb = build_comparison_keyboard(result)
-            await status_msg.edit_text(report_text, reply_markup=kb, parse_mode="HTML")
+            await status_msg.edit_text(
+                report_text,
+                reply_markup=kb,
+                parse_mode="HTML",
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
             return
         except Exception as exc:
             safe_exc = html.escape(str(exc))
             await status_msg.edit_text(
                 f"❌ <b>Price comparison error:</b>\n{safe_exc}",
+                parse_mode="HTML",
+            )
+            return
+
+    # 3. Check if user is in /instock query input state
+    if context.user_data.pop("awaiting_instock_query", False):
+        discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+        status_msg = await update.effective_message.reply_html(
+            f"⚡ <i>Checking real-time stock across stores for:</i>\n<b>{html.escape(text)}</b>..."
+        )
+        try:
+            result = await discovery_service.compare_query(text)
+            report_text = format_instock_report(result)
+            kb = build_instock_keyboard(result)
+            await status_msg.edit_text(
+                report_text,
+                reply_markup=kb,
+                parse_mode="HTML",
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+            return
+        except Exception as exc:
+            safe_exc = html.escape(str(exc))
+            await status_msg.edit_text(
+                f"❌ <b>Stock check error:</b>\n{safe_exc}",
                 parse_mode="HTML",
             )
             return
@@ -1348,7 +1431,12 @@ async def photo_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         lines.append("\n<i>Tap below to compare all stores or track this product:</i>")
 
         kb = build_comparison_keyboard(cmp_result)
-        await status_msg.edit_text("\n".join(lines), reply_markup=kb, parse_mode="HTML")
+        await status_msg.edit_text(
+            "\n".join(lines),
+            reply_markup=kb,
+            parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
 
     except Exception as exc:
         logger.warning("Error processing photo message", error=str(exc))

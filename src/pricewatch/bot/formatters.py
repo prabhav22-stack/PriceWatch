@@ -1,5 +1,6 @@
 """HTML message templates and formatters for Telegram."""
 
+import html
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pricewatch.domain.models import (
@@ -53,7 +54,9 @@ def format_help_message() -> str:
     return (
         "📖 <b>PriceWatch 2.0 Complete Command Reference</b>\n\n"
         "🛒 <b>Universal Price & Stock Tracking:</b>\n"
-        "• <b>Send Any Link:</b> Just paste a product URL directly in chat!\n"
+        "• <b>Send Any Link or Photo:</b> Paste a product URL or upload a screenshot directly in chat!\n"
+        "• <code>/compare &lt;product&gt;</code> - Find lowest price and deals across all trusted stores\n"
+        "• <code>/instock &lt;product&gt;</code> - Instantly check where a product is in stock right now\n"
         "• <code>/track &lt;url&gt; [target_price]</code> - Start tracking product with target price or auto-mode\n"
         "• <code>/tracked</code> (or <code>/list</code>) - List your currently tracked products\n"
         "• <code>/check</code> - Run instant live check across all your tracked items\n"
@@ -236,6 +239,52 @@ def format_comparison_report(result: ComparisonResult) -> str:
 
     lines.append("")
     lines.append("<i>💡 Tap a store button below to switch tracking or set an alert for that store.</i>")
+    return "\n".join(lines)
+
+
+def format_instock_report(result: ComparisonResult) -> str:
+    """Format live in-stock discovery results across stores."""
+    in_stock_deals = [d for d in result.deals if d.available and d.price_paise > 0]
+
+    lines = [
+        "⚡ <b>Instant Stock Finder</b>",
+        f"📦 <b>Product:</b> {html.escape(result.query_title)}",
+    ]
+    if result.target_weight_g:
+        w_str = (
+            f"{result.target_weight_g // 1000}kg"
+            if result.target_weight_g >= 1000 and result.target_weight_g % 1000 == 0
+            else f"{result.target_weight_g}g"
+        )
+        lines.append(f"⚖️ <b>Spec / Size:</b> {w_str}")
+
+    lines.append("")
+
+    if in_stock_deals:
+        plural = "s" if len(in_stock_deals) > 1 else ""
+        lines.append(f"🟢 <b>IN STOCK at {len(in_stock_deals)} store{plural} right now!</b>\n")
+        for i, deal in enumerate(in_stock_deals, start=1):
+            price_str = format_paise_to_inr(deal.price_paise)
+            mrp_str = (
+                f" <s>{format_paise_to_inr(deal.mrp_paise)}</s>"
+                if deal.mrp_paise and deal.mrp_paise > deal.price_paise
+                else ""
+            )
+            badge = " 🏆 <b>CHEAPEST</b>" if deal.is_best_deal else ""
+            lines.append(f"{i}. 🟢 <b>{deal.store_name}:</b> <code>{price_str}</code>{mrp_str}{badge}")
+            if deal.variant_title:
+                lines.append(f"   🏷️ <i>{deal.variant_title}</i>")
+            if deal.url:
+                lines.append(f"   🔗 <a href='{deal.url}'>Direct Purchase Link</a>")
+
+        lines.append("")
+        lines.append("<i>💡 Tap a button below to open the store directly or start tracking alerts.</i>")
+    else:
+        stores_cnt = max(result.stores_checked, len(result.deals), 3)
+        lines.append("🔴 <b>Currently OUT OF STOCK across all checked stores!</b>")
+        lines.append(f"<i>(Checked {stores_cnt} stores including Amazon, Flipkart, HyugaLife, Nutrabay, HealthKart)</i>\n")
+        lines.append("🔔 <i>Tap below to set a <b>Restock Alert</b> and get notified the moment it comes back in stock!</i>")
+
     return "\n".join(lines)
 
 

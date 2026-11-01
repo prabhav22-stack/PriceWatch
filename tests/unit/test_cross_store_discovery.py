@@ -3,11 +3,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
-from pricewatch.bot.formatters import format_comparison_report
+from pricewatch.bot.formatters import format_comparison_report, format_instock_report
 from pricewatch.bot.handlers.callbacks import callback_query_dispatcher
-from pricewatch.bot.handlers.commands import compare_command_handler, plain_text_handler
+from pricewatch.bot.handlers.commands import compare_command_handler, instock_command_handler, plain_text_handler
 from pricewatch.bot.keyboards import (
     build_comparison_keyboard,
+    build_instock_keyboard,
     build_listing_card_keyboard,
     build_tracking_mode_keyboard,
 )
@@ -21,6 +22,7 @@ from pricewatch.services.discovery_matcher import (
 )
 from pricewatch.services.discovery_service import DiscoveryService
 from pricewatch.services.tracker_service import TrackerService
+from pricewatch.services.vision_extractor import vision_extractor
 
 
 def test_extract_weight_in_grams():
@@ -79,6 +81,22 @@ def test_compute_match_score_exact_vs_mismatches():
         candidate_weight_g=500,
     )
     assert ok3 is False
+
+    # 4. Conflicting category under same brand must fail (e.g. Shilajit vs Zinc Magnesium)
+    score4, ok4 = compute_match_score(
+        query_title="Nutrabay Shilajit",
+        candidate_title="Nutrabay Pro Zinc Magnesium with Vitamin B6 (ZMA) 60 Veg Tablets",
+    )
+    assert ok4 is False
+    assert score4 <= 0.20
+
+    # 5. Conflicting category: Whey vs Buttermilk under Amul
+    score5, ok5 = compute_match_score(
+        query_title="Amul Whey Protein 1kg",
+        candidate_title="Amul High Protein Rose Buttermilk 200ml",
+    )
+    assert ok5 is False
+    assert score5 <= 0.20
 
 
 def test_construct_search_query():
@@ -444,5 +462,135 @@ async def test_switch_tracking_callback():
     query.edit_message_text.assert_called_once()
     conf_msg = query.edit_message_text.call_args[0][0]
     assert "Successfully Switched Tracking to Flipkart!" in conf_msg
+
+
+def test_format_instock_report_and_keyboard():
+    deal_in_stock = StoreDeal(
+        store_name="Flipkart",
+        product_title="Nutrabay Pure Shilajit Resin 20g",
+        price_paise=49900,
+        available=True,
+        url="https://flipkart.com/shilajit/123",
+        is_best_deal=True,
+    )
+    deal_oos = StoreDeal(
+        store_name="Nutrabay",
+        product_title="Nutrabay Pure Shilajit 20g",
+        price_paise=54900,
+        available=False,
+        url="https://nutrabay.com/shilajit/123",
+    )
+    res = ComparisonResult(
+        query_title="Nutrabay Shilajit",
+        target_weight_g=20,
+        best_deal=deal_in_stock,
+        deals=[deal_in_stock, deal_oos],
+        stores_checked=2,
+    )
+
+    report = format_instock_report(res)
+    assert "Instant Stock Finder" in report
+    assert "Nutrabay Shilajit" in report
+    assert "IN STOCK at 1 store right now!" in report
+    assert "Flipkart" in report
+    assert "₹499" in report
+    assert "Nutrabay:" not in report  # Out of stock store excluded from in-stock list
+
+    kb = build_instock_keyboard(res)
+    buttons = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("Flipkart" in b for b in buttons)
+
+
+def test_format_instock_report_all_out_of_stock():
+    deal_oos = StoreDeal(
+        store_name="Amazon.in",
+        product_title="Rare Supplement 500g",
+        price_paise=129900,
+        available=False,
+        url="https://amazon.in/dp/B001",
+    )
+    res = ComparisonResult(
+        query_title="Rare Supplement",
+        target_weight_g=500,
+        best_deal=None,
+        deals=[deal_oos],
+        stores_checked=3,
+    )
+
+    report = format_instock_report(res)
+    assert "OUT OF STOCK across all checked stores" in report
+    assert "Restock Alert" in report
+
+
+@pytest.mark.asyncio
+async def test_instock_command_handler_no_args():
+    update = MagicMock()
+    update.effective_user.id = 12345
+    update.effective_message.reply_html = AsyncMock()
+    context = MagicMock()
+    context.args = []
+    context.user_data = {}
+
+    await instock_command_handler(update, context)
+
+    assert context.user_data.get("awaiting_instock_query") is True
+    update.effective_message.reply_html.assert_called_once()
+    msg = update.effective_message.reply_html.call_args[0][0]
+    assert "Instant Stock Finder" in msg
+
+
+@pytest.mark.asyncio
+async def test_instock_command_handler_with_query():
+    update = MagicMock()
+    update.effective_user.id = 12345
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    update.effective_message.reply_html = AsyncMock(return_value=status_msg)
+
+    context = MagicMock()
+    context.args = ["Nutrabay", "Shilajit"]
+    mock_deal = StoreDeal(
+        store_name="Flipkart",
+        product_title="Nutrabay Pure Shilajit Resin 20g",
+        price_paise=49900,
+        available=True,
+        url="https://flipkart.com/shilajit/123",
+        is_best_deal=True,
+    )
+    mock_result = ComparisonResult(
+        query_title="Nutrabay Shilajit",
+        target_weight_g=20,
+        best_deal=mock_deal,
+        deals=[mock_deal],
+        stores_checked=1,
+    )
+    mock_disc_svc = MagicMock()
+    mock_disc_svc.compare_query = AsyncMock(return_value=mock_result)
+    context.bot_data = {"discovery_service": mock_disc_svc}
+
+    await instock_command_handler(update, context)
+
+    status_msg.edit_text.assert_called_once()
+    edited_text = status_msg.edit_text.call_args[0][0]
+    assert "Instant Stock Finder" in edited_text
+    assert "Flipkart" in edited_text
+
+
+@pytest.mark.asyncio
+async def test_offline_ocr_extractor_on_screenshot():
+    import os
+    path = "C:/Users/prabh/.gemini/antigravity/brain/444aad51-7af3-453c-9cc1-2674549d4b00/.user_uploaded/media_1793503213696_b33884aa.jpg"
+    if not os.path.exists(path):
+        pytest.skip("User screenshot not present on disk")
+
+    with open(path, "rb") as f:
+        img_bytes = f.read()
+
+    # Ensure settings.GEMINI_API_KEY is unset so it exercises local OCR
+    with patch("pricewatch.services.vision_extractor.settings.GEMINI_API_KEY", None):
+        product = await vision_extractor.extract_from_image_bytes(img_bytes)
+        assert product is not None
+        assert "Nutrabay" in product.title or (product.brand and "nutrabay" in product.brand.lower())
+
 
 

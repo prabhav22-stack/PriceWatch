@@ -48,6 +48,7 @@ from pricewatch.bot.handlers.commands import (
     favourites_command_handler,
     help_handler,
     history_command_handler,
+    instock_command_handler,
     list_handler,
     map_handler,
     photo_message_handler,
@@ -96,6 +97,8 @@ def create_telegram_app(
     app.add_handler(CommandHandler("help", help_handler))
     app.add_handler(CommandHandler("track", track_handler))
     app.add_handler(CommandHandler("compare", compare_command_handler))
+    app.add_handler(CommandHandler("instock", instock_command_handler))
+    app.add_handler(CommandHandler("stock", instock_command_handler))
     app.add_handler(CommandHandler("trackall", trackall_command_handler))
     app.add_handler(CommandHandler("list", list_handler))
     app.add_handler(CommandHandler("tracked", list_handler))

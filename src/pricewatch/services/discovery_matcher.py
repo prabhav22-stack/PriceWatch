@@ -40,7 +40,34 @@ NOISE_WORDS = {
     "clinically", "tested", "proven", "certified", "ayurvedic", "himalayan",
     "supplement", "high", "quality", "for", "men", "women", "adults",
     "organic", "grade", "gold", "super", "daily", "boost", "booster",
+    "with", "and", "pro", "advanced", "ultra", "extra", "strength",
 }
+
+# Core supplement categories to guard against false cross-category substitutions
+CORE_PRODUCT_CATEGORIES = {
+    "shilajit", "whey", "isolate", "concentrate", "creatine", "casein",
+    "peanut", "butter", "multivitamin", "fish", "oil", "omega",
+    "ashwagandha", "glutamine", "bcaa", "eaa", "collagen",
+    "magnesium", "zinc", "zma", "citrulline", "arginine", "gainer",
+    "preworkout", "testosterone", "melatonin", "biotin", "electrolyte",
+    "bar", "cookie", "lassi", "shake", "milkshake", "paneer",
+    "buttermilk", "vinegar", "thistle", "glucosamine", "carnitine",
+}
+
+
+def extract_core_categories(text: str) -> set:
+    """Extract known core supplement product categories present in text."""
+    if not text:
+        return set()
+    cleaned = re.sub(r"[^\w\s]", " ", text.lower())
+    words = set(cleaned.split())
+    found = words.intersection(CORE_PRODUCT_CATEGORIES)
+    # Special multi-word categories
+    if "peanut" in words or "butter" in words:
+        found.add("peanut_butter")
+    if "fish" in words or "omega" in words:
+        found.add("omega_fish_oil")
+    return found
 
 
 def extract_weight_in_grams(text: str) -> Optional[int]:
@@ -124,10 +151,7 @@ def compute_match_score(
     clean_q = clean_product_tokens(query_title)
     clean_c = clean_product_tokens(candidate_title)
 
-    # 1. Base semantic token match using rapidfuzz
-    base_ratio = fuzz.token_set_ratio(clean_q, clean_c) / 100.0
-
-    # 2. Brand compatibility check
+    # 1. Brand compatibility check
     q_b = query_brand or extract_brand(query_title)
     c_b = candidate_brand or extract_brand(candidate_title)
 
@@ -144,7 +168,41 @@ def compute_match_score(
     elif c_b:
         brand_bonus = 0.05
 
-    # 3. Spec / Weight compatibility check
+    # 2. Category Guard: prevent cross-category false matches (e.g. Shilajit matching Zinc/Magnesium)
+    q_cats = extract_core_categories(query_title)
+    c_cats = extract_core_categories(candidate_title)
+    if q_cats:
+        # If query specified categories, candidate must match at least one
+        has_cat_match = bool(q_cats.intersection(c_cats))
+        # If not matching and candidate belongs to a completely different supplement category, reject immediately
+        if not has_cat_match:
+            return 0.10, False
+
+    # 3. Non-Brand Token Coverage Check
+    clean_q_list = clean_q.split()
+    brand_tokens = set(q_b.split()) if q_b else set()
+    q_clean_tokens = [w for w in clean_q_list if w not in brand_tokens]
+
+    c_clean_tokens = set(clean_c.split())
+    matched_count = 0
+    if q_clean_tokens:
+        for tok in q_clean_tokens:
+            if tok in c_clean_tokens or any(fuzz.ratio(tok, c_tok) >= 85 for c_tok in c_clean_tokens):
+                matched_count += 1
+        coverage = matched_count / len(q_clean_tokens)
+        if len(q_clean_tokens) == 1 and matched_count == 0:
+            return 0.10, False
+        if coverage < 0.50:
+            return 0.15, False
+    else:
+        coverage = 1.0
+
+    # 4. Balanced multi-metric base score
+    set_ratio = fuzz.token_set_ratio(clean_q, clean_c) / 100.0
+    sort_ratio = fuzz.token_sort_ratio(clean_q, clean_c) / 100.0
+    base_ratio = 0.40 * set_ratio + 0.35 * sort_ratio + 0.25 * coverage
+
+    # 5. Spec / Weight compatibility check
     spec_penalty = 0.0
     is_spec_compatible = True
 

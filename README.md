@@ -96,6 +96,7 @@ flowchart TD
 | `/start` | Home dashboard, live system overview, and interactive navigation menu |
 | `/track <url>` | Track any product link with auto or custom target price |
 | `/compare <query>` | Find the lowest price and live stock across all 7+ trusted stores |
+| `/instock <query>` | Instantly scan all stores to see where a product is in stock right now |
 | `/tracked` or `/list` | List all your active tracked products with live prices and status badges |
 | `/check` | Perform an instant live price and stock refresh across all tracked items |
 | `/untrack <id>` | Stop tracking a product and cancel notifications |
@@ -134,7 +135,7 @@ flowchart TD
 The test suite runs 100% offline using deterministic mocks and recorded HTTP fixtures.
 
 ```bash
-# Run the entire test suite (162 tests)
+# Run the entire test suite (167 tests)
 pytest tests -q
 
 # Run specific functional suites
