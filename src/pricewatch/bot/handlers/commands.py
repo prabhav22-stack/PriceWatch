@@ -3,6 +3,7 @@
 import html
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from pricewatch.bot.formatters import (
@@ -1156,7 +1157,7 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     text = (update.effective_message.text or "").strip()
-    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    tracker_service: Optional[TrackerService] = context.bot_data.get("tracker_service")
 
     # 1. Check if user is in custom price input state
     awaiting_listing_id = context.user_data.get("awaiting_custom_price")
@@ -1259,15 +1260,90 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data["awaiting_track_url"] = True
         return
     else:
-        # User typed plain text or asked a question
-        kb = build_action_nav_keyboard("🥛 Browse Amul", "amul_menu", "📋 Tracked Items", "nav:tracked")
-        await update.effective_message.reply_html(
-            "👋 <b>PriceWatch Assistant</b>\n\n"
-            "• 🔗 <b>Paste any product link</b> (Amazon, Nutrabay, Flipkart, MuscleBlaze, Shopify) directly here to track price and stock.\n"
-            "• Or use the buttons below or Telegram <b>Menu</b> to explore:",
-            reply_markup=kb,
-        )
-        return
+        # Conversational Shopping Advisor & Natural Search
+        from pricewatch.services.advisor_service import advisor_service
+
+        # Send typing indicator
+        if update.effective_chat:
+            try:
+                await context.bot.send_chat_action(
+                    chat_id=update.effective_chat.id, action=ChatAction.TYPING
+                )
+            except Exception:
+                pass
+
+        try:
+            intent = await advisor_service.parse_chat_intent(text)
+        except Exception:
+            intent = None
+
+        if intent and intent.intent_type == "recommendation":
+            search_label = intent.search_query or intent.category or text
+            status_msg = await update.effective_message.reply_html(
+                f"🔍 <i>Analyzing deals and finding top recommendations for:</i>\n<b>{html.escape(search_label)}</b>..."
+            )
+            try:
+                report_text, kb = await advisor_service.generate_recommendations(
+                    category=intent.category or search_label,
+                    sub_type=intent.sub_type,
+                    max_budget_inr=intent.max_budget_inr,
+                    limit=intent.limit or 5,
+                    original_query=text,
+                )
+                await status_msg.edit_text(
+                    report_text,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                )
+            except Exception as exc:
+                safe_exc = html.escape(str(exc))
+                await status_msg.edit_text(
+                    f"❌ <b>Recommendation error:</b>\n{safe_exc}\n\nTry searching with a specific brand or category.",
+                    parse_mode="HTML",
+                )
+            return
+
+        elif intent and intent.intent_type == "comparison":
+            search_query = intent.search_query or text
+            status_msg = await update.effective_message.reply_html(
+                f"🔍 <i>Searching across trusted stores for best price and stock:</i>\n<b>{html.escape(search_query)}</b>..."
+            )
+            try:
+                discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+                result = await discovery_service.compare_query(search_query)
+                report_text = format_comparison_report(result)
+                kb = build_comparison_keyboard(result)
+                await status_msg.edit_text(
+                    report_text,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                )
+            except Exception as exc:
+                safe_exc = html.escape(str(exc))
+                await status_msg.edit_text(
+                    f"❌ <b>Price comparison error:</b>\n{safe_exc}\n\nPlease try again with a specific product name or link.",
+                    parse_mode="HTML",
+                )
+            return
+
+        else:
+            # General chat or greeting
+            reply_intro = f"{html.escape(intent.chat_reply)}\n\n" if (intent and intent.chat_reply) else ""
+            kb = build_action_nav_keyboard("🔍 Compare Prices", "trk:compare", "🥛 Browse Amul", "amul_menu")
+            await update.effective_message.reply_html(
+                f"👋 <b>PriceWatch Assistant</b>\n\n"
+                f"{reply_intro}"
+                "• 🔗 <b>Paste any product link</b> (Amazon, Nutrabay, Flipkart, MuscleBlaze, Shopify) directly here to track price and stock.\n"
+                "• 💬 <b>Or chat naturally:</b>\n"
+                "  - <i>\"Top 5 shilajit under 1000\"</i>\n"
+                "  - <i>\"Best whey protein concentrate under 2000\"</i>\n"
+                "  - <i>\"Nakpro Perform 1kg unflavoured\"</i>\n\n"
+                "• Or use the buttons below or Telegram <b>Menu</b> to explore:",
+                reply_markup=kb,
+            )
+            return
 
 
 async def notify_if_available_elsewhere(
