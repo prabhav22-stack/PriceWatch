@@ -13,6 +13,7 @@ from pricewatch.domain.models import (
 )
 from pricewatch.logging_setup import get_logger
 from pricewatch.repositories.base import BaseListingRepo, BaseSubscriptionRepo, BaseUserRepo
+from pricewatch.services.multi_channel_notifier import notifier as multichannel_notifier
 from pricewatch.validation.normalizer import format_paise_to_inr
 
 logger = get_logger("alert_service")
@@ -398,6 +399,16 @@ class AlertService:
                         alert_rearmed=False,
                     )
                     alerts_sent += 1
+
+                    # Multi-channel secondary dispatch via Apprise
+                    try:
+                        await multichannel_notifier.notify(
+                            title=f"PriceWatch: {listing.product_title}",
+                            body=text,
+                            url=listing.canonical_url,
+                        )
+                    except Exception:
+                        pass
 
                     # Check user tracking style ("once" untracks automatically) & auto-order trigger
                     if self.user_repo:

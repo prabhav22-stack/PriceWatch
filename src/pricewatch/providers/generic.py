@@ -198,6 +198,16 @@ class GenericProvider(BaseProvider):
         if dom_price:
             return dom_title, dom_price, None, True, "scoped_dom"
 
+        # 5. Scrapling Adaptive Self-Healing Fallback
+        try:
+            from pricewatch.providers.adaptive_parser import AdaptiveEcomParser
+            adaptive = AdaptiveEcomParser(html)
+            ad_title, ad_price, ad_mrp, ad_avail = adaptive.extract_all()
+            if ad_price:
+                return ad_title or "Tracked Product", ad_price, ad_mrp, ad_avail, "scrapling_adaptive"
+        except Exception:
+            pass
+
         raise ExtractionError(f"Could not extract price from {url} using JSON-LD, OpenGraph, or DOM")
 
     async def resolve_url(self, url: str, pincode: str = "") -> ResolutionResult:

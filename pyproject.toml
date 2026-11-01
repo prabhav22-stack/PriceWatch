@@ -24,6 +24,12 @@ dependencies = [
     "matplotlib>=3.9.0",
     "rapidfuzz>=3.0.0",
     "curl_cffi>=0.7.0",
+    "cashews>=7.6.0",
+    "apprise>=2.1.0",
+    "scrapling>=0.5.0",
+    "camoufox[geoip]>=0.5.8",
+    "fastapi>=0.160.0",
+    "uvicorn>=0.50.0",
 ]
 
 [project.optional-dependencies]

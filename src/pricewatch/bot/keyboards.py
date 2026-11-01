@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from typing import List, Optional, Sequence, Set
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from pricewatch.domain.models import CanonicalListing, ComparisonResult, StoreDeal, User, VariantOption
 from pricewatch.validation.normalizer import format_paise_to_inr
@@ -148,7 +149,7 @@ def build_target_price_keyboard(listing_id: int, current_price_paise: int) -> In
 
 
 def build_listing_card_keyboard(listing_id: int, is_nutrabay: bool = False) -> InlineKeyboardMarkup:
-    """Action buttons for tracked listings (Chart + Untrack + Menu)."""
+    """Action buttons for tracked listings (Chart + WebApp + Untrack + Menu)."""
     rows = [
         [
             InlineKeyboardButton("📊 View Price Chart", callback_data=f"chart:{listing_id}"),
@@ -158,6 +159,14 @@ def build_listing_card_keyboard(listing_id: int, is_nutrabay: bool = False) -> I
             InlineKeyboardButton("🔍 Compare Across Stores", callback_data=f"cmp:{listing_id}"),
         ],
     ]
+    webapp_url = os.getenv("WEBAPP_URL")
+    if webapp_url:
+        rows.append([
+            InlineKeyboardButton(
+                "📱 Interactive Dashboard",
+                web_app=WebAppInfo(url=f"{webapp_url.rstrip('/')}/webapp/dashboard/{listing_id}"),
+            )
+        ])
     if is_nutrabay:
         rows.append([
             InlineKeyboardButton("🕒 Last in Stock Report", callback_data=f"nb_stock:{listing_id}"),
@@ -190,6 +199,15 @@ def build_comparison_keyboard(
     action_row.append(InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"))
     action_row.append(InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"))
     rows.append(action_row)
+
+    webapp_url = os.getenv("WEBAPP_URL")
+    if webapp_url and listing_id:
+        rows.append([
+            InlineKeyboardButton(
+                "📱 Interactive Dashboard",
+                web_app=WebAppInfo(url=f"{webapp_url.rstrip('/')}/webapp/dashboard/{listing_id}"),
+            )
+        ])
 
     return InlineKeyboardMarkup(rows)
 

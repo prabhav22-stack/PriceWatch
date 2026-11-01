@@ -19,6 +19,7 @@ DEFAULT_BOT_COMMANDS: List[BotCommand] = [
     BotCommand("untrack", "Stop tracking a product"),
     BotCommand("history", "View price trend chart"),
     BotCommand("settings", "Notification settings & preferences"),
+    BotCommand("channels", "Multi-channel alerts (Discord/NTFY)"),
     BotCommand("pincode", "View or set delivery pincode"),
     BotCommand("setpincode", "Set a new delivery pincode"),
     BotCommand("products", "Browse Amul products & stock"),

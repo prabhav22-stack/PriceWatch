@@ -6,6 +6,7 @@ import urllib.parse
 from typing import Any, Dict, List, Optional
 from selectolax.lexbor import LexborHTMLParser
 
+from pricewatch.core.cache import cache
 from pricewatch.domain.models import StoreDeal
 from pricewatch.logging_setup import get_logger
 from pricewatch.providers.http_client import http_client
@@ -432,6 +433,7 @@ async def search_muscleblaze(query: str, target_weight_g: Optional[int] = None) 
     return deals
 
 
+@cache(ttl="3m", key="all_stores:{query}:{target_weight_g}", lock=True)
 async def query_all_stores(
     query: str,
     target_weight_g: Optional[int] = None,

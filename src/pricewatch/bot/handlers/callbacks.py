@@ -851,6 +851,22 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                 pass
             return
 
+        # 11. Multi-Channel Test Callback
+        if data == "channels:test":
+            from pricewatch.services.multi_channel_notifier import notifier as multichannel_notifier
+            user_channels = context.user_data.get("notification_channels", [])
+            ok = await multichannel_notifier.notify(
+                title="PriceWatch Test Alert",
+                body="<b>PriceWatch Test Alert</b>\nYour multi-channel notification pipeline is working!",
+                channels=user_channels or None,
+            )
+            toast = "Test alert dispatched! ✅" if ok else "No channels configured or failed ⚠️"
+            try:
+                await query.answer(toast)
+            except Exception:
+                pass
+            return
+
         # 10. Variant selection button (trk:v:<variant_id>)
         if data.startswith("trk:v:"):
             parts = data.split(":")

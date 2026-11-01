@@ -48,6 +48,7 @@ from pricewatch.services.amul_stock_tracker import AmulStockTracker
 from pricewatch.services.chart_service import ChartService
 from pricewatch.services.check_orchestrator import CheckOrchestrator
 from pricewatch.services.discovery_service import DiscoveryService
+from pricewatch.services.multi_channel_notifier import notifier as multichannel_notifier
 from pricewatch.services.tracker_service import TrackerService
 from pricewatch.utils.time_utils import format_ist_datetime
 from pricewatch.validation.normalizer import parse_inr_to_paise
@@ -1220,3 +1221,77 @@ async def _inspect_url_and_prompt_modes(
     except Exception as exc:
         safe_exc = html.escape(str(exc))
         await status_msg.edit_text(f"❌ <b>Failed to inspect link:</b>\n{safe_exc}", parse_mode="HTML")
+
+
+async def channels_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /channels command to manage multi-channel alerts (Discord, NTFY, Slack, etc.)."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    args = context.args or []
+    user_id = update.effective_user.id
+    user_channels = context.user_data.get("notification_channels", [])
+
+    if not args:
+        lines = [
+            "📣 <b>Multi-Channel Notification Settings</b>\n",
+            "PriceWatch can dispatch instant restock & price drop alerts to Discord, NTFY, Slack, and Webhooks alongside Telegram!\n",
+            f"<b>Active Channels:</b> {len(user_channels)} custom channel(s)",
+        ]
+        if user_channels:
+            for i, ch in enumerate(user_channels, 1):
+                masked = ch[:18] + "..." if len(ch) > 20 else ch
+                lines.append(f"{i}. <code>{html.escape(masked)}</code>")
+        else:
+            lines.append("<i>Only native Telegram alerts currently active.</i>")
+
+        lines.extend([
+            "\n<b>Supported Protocols:</b>",
+            "• Discord: <code>/channels add discord://webhook_id/token</code>",
+            "• NTFY: <code>/channels add ntfy://your_topic_name</code>",
+            "• Slack: <code>/channels add slack://TokenA/TokenB/TokenC</code>",
+            "• Pushover: <code>/channels add pover://user_key@token</code>",
+            "\n<b>Commands:</b>",
+            "• <code>/channels add &lt;url&gt;</code> - Add a notification channel",
+            "• <code>/channels test</code> - Send a test alert to all connected channels",
+            "• <code>/channels clear</code> - Remove all custom channels",
+        ])
+        kb = build_action_nav_keyboard("🧪 Test Channels", "channels:test", "⚙️ Alert Settings", "cfg:refresh")
+        await update.effective_message.reply_html("\n".join(lines), reply_markup=kb)
+        return
+
+    subcmd = args[0].lower()
+    if subcmd == "add":
+        if len(args) < 2:
+            await update.effective_message.reply_html(
+                "⚠️ <b>Usage:</b> <code>/channels add &lt;service_url&gt;</code>\n"
+                "Example: <code>/channels add ntfy://my_whey_alerts</code>"
+            )
+            return
+        new_url = args[1].strip()
+        if new_url not in user_channels:
+            user_channels.append(new_url)
+            context.user_data["notification_channels"] = user_channels
+        masked = new_url[:20] + "..." if len(new_url) > 22 else new_url
+        await update.effective_message.reply_html(
+            f"✅ <b>Channel Added Successfully!</b>\n"
+            f"Channel: <code>{html.escape(masked)}</code>\n\n"
+            "Restock and price drop notifications will now be dispatched to this endpoint alongside Telegram."
+        )
+    elif subcmd == "clear":
+        context.user_data["notification_channels"] = []
+        await update.effective_message.reply_html("🗑️ <b>All custom notification channels cleared.</b> Native Telegram alerts remain active.")
+    elif subcmd == "test":
+        await update.effective_message.reply_html("🧪 <i>Dispatching test alert across all configured channels...</i>")
+        ok = await multichannel_notifier.notify(
+            title="PriceWatch Test Alert",
+            body="<b>PriceWatch Test Alert</b>\nYour multi-channel notification pipeline is working perfectly!",
+            channels=user_channels or None,
+        )
+        if ok:
+            await update.effective_message.reply_html("✅ <b>Test notification sent successfully!</b> Check your Discord/NTFY channel.")
+        else:
+            await update.effective_message.reply_html("⚠️ <b>Test alert failed.</b> Please verify your channel URL syntax.")
+    else:
+        await update.effective_message.reply_html("⚠️ Unknown subcommand. Use <code>/channels</code> to view usage.")
+
