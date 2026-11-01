@@ -365,11 +365,11 @@ async def compare_command_handler(update: Update, context: ContextTypes.DEFAULT_
     )
 
     try:
-        from pricewatch.services.gemini_service import gemini_service
+        from pricewatch.services.llm_router import llm_router
         effective_query = query_str
-        if not query_str.startswith("http") and gemini_service.is_available:
+        if not query_str.startswith("http"):
             try:
-                norm = await gemini_service.normalize_user_query(query_str)
+                norm = await llm_router.normalize_user_query(query_str)
                 if norm and norm.get("clean_query"):
                     effective_query = norm["clean_query"]
             except Exception:
@@ -454,11 +454,11 @@ async def instock_command_handler(update: Update, context: ContextTypes.DEFAULT_
     )
 
     try:
-        from pricewatch.services.gemini_service import gemini_service
+        from pricewatch.services.llm_router import llm_router
         effective_query = query_str
-        if not query_str.startswith("http") and gemini_service.is_available:
+        if not query_str.startswith("http"):
             try:
-                norm = await gemini_service.normalize_user_query(query_str)
+                norm = await llm_router.normalize_user_query(query_str)
                 if norm and norm.get("clean_query"):
                     effective_query = norm["clean_query"]
             except Exception:

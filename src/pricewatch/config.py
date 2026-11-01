@@ -48,6 +48,7 @@ class Settings(BaseSettings):
 
     # Observability & AI
     GEMINI_API_KEY: str = Field(default="", description="Google Gemini API Key for vision and deal intelligence")
+    GROQ_API_KEY: str = Field(default="", description="Groq API Key for ultra-low latency query parsing")
     SENTRY_DSN: str = Field(default="", description="Sentry DSN for error reporting")
     PROMETHEUS_ENABLED: bool = Field(default=True, description="Enable Prometheus metrics exporter")
     WEBAPP_URL: str = Field(default="", description="Telegram Mini App base URL")
