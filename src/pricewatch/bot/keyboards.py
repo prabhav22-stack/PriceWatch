@@ -187,8 +187,8 @@ def build_comparison_keyboard(
     """Buttons for multi-store price comparison results."""
     rows: List[List[InlineKeyboardButton]] = []
 
-    # Direct store links (top 3)
-    top_deals = [d for d in result.deals if d.url][:3]
+    # Direct store links (top 5)
+    top_deals = [d for d in result.deals if d.url][:5]
     for d in top_deals:
         p_str = format_paise_to_inr(d.price_paise) if d.price_paise else ""
         icon = "🟢" if d.available else "🔴"
@@ -220,9 +220,9 @@ def build_instock_keyboard(
     """Buttons for instant in-stock search results."""
     rows: List[List[InlineKeyboardButton]] = []
 
-    # Direct store purchase buttons for in-stock stores (up to top 4)
+    # Direct store purchase buttons for in-stock stores (up to top 5)
     in_stock_deals = [d for d in result.deals if d.available and d.url]
-    for d in in_stock_deals[:4]:
+    for d in in_stock_deals[:5]:
         p_str = format_paise_to_inr(d.price_paise) if d.price_paise else ""
         label = f"🛒 Buy on {d.store_name} ({p_str})"
         rows.append([InlineKeyboardButton(label, url=d.url)])

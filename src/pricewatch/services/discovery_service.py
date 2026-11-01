@@ -93,9 +93,13 @@ class DiscoveryService:
         )
 
         all_candidates: List[StoreDeal] = [current_deal]
-        # Deduplicate external deals: keep best match per store
+        # Deduplicate external deals: keep best in-stock, highest match per store
         seen_stores = {current_store_name.lower()}
-        for deal in sorted(external_deals, key=lambda d: d.match_score, reverse=True):
+        for deal in sorted(
+            external_deals,
+            key=lambda d: (1 if d.available else 0, d.match_score, -d.price_paise if d.price_paise > 0 else -999999999),
+            reverse=True,
+        ):
             s_name = deal.store_name.lower()
             if s_name not in seen_stores:
                 seen_stores.add(s_name)
@@ -168,10 +172,14 @@ class DiscoveryService:
 
         external_deals = await query_all_stores(query, target_weight_g=target_weight)
 
-        # Deduplicate best deal per store
+        # Deduplicate best in-stock, highest match deal per store
         seen_stores = set()
         deduped: List[StoreDeal] = []
-        for deal in sorted(external_deals, key=lambda d: d.match_score, reverse=True):
+        for deal in sorted(
+            external_deals,
+            key=lambda d: (1 if d.available else 0, d.match_score, -d.price_paise if d.price_paise > 0 else -999999999),
+            reverse=True,
+        ):
             s_name = deal.store_name.lower()
             if s_name not in seen_stores:
                 seen_stores.add(s_name)

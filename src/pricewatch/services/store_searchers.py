@@ -102,17 +102,34 @@ async def search_hyugalife(query: str, target_weight_g: Optional[int] = None) ->
 
 
 async def search_healthkart(query: str, target_weight_g: Optional[int] = None) -> List[StoreDeal]:
-    """Search HealthKart via Next.js SSR catalog."""
+    """Search HealthKart via Next.js SSR catalog with resilient TLS fallback."""
     deals: List[StoreDeal] = []
     enc_q = urllib.parse.quote_plus(query)
     url = f"https://www.healthkart.com/search?txtQ={enc_q}"
 
+    html_text = ""
     try:
         resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=6.0)
-        if resp.status_code != 200:
-            return deals
+        if resp.status_code == 200:
+            html_text = resp.text
+    except Exception:
+        pass
 
-        parser = LexborHTMLParser(resp.text)
+    if not html_text:
+        def _fetch_hk() -> str:
+            try:
+                from curl_cffi import requests
+                r = requests.get(url, impersonate="chrome124", timeout=8)
+                return r.text if r.status_code == 200 else ""
+            except Exception:
+                return ""
+        html_text = await asyncio.to_thread(_fetch_hk)
+
+    if not html_text:
+        return deals
+
+    try:
+        parser = LexborHTMLParser(html_text)
         script = parser.css_first('script#__NEXT_DATA__')
         if not script:
             return deals
@@ -177,7 +194,7 @@ async def search_shopify_store(
     query: str,
     target_weight_g: Optional[int] = None,
 ) -> List[StoreDeal]:
-    """Search a direct Shopify D2C brand store using the predictive search API."""
+    """Search a direct Shopify D2C brand store using predictive search API & variant inspection."""
     deals: List[StoreDeal] = []
     enc_q = urllib.parse.quote_plus(query)
     url = f"https://{domain}/search/suggest.json?q={enc_q}&resources[type]=product"
@@ -190,45 +207,91 @@ async def search_shopify_store(
         data = resp.json()
         products = data.get("resources", {}).get("results", {}).get("products", [])
 
-        for p in products[:10]:
+        for p in products[:5]:
             title = p.get("title") or ""
+            handle = p.get("handle") or ""
             if not title:
                 continue
 
-            raw_price = p.get("price") or 0
-            price_paise = parse_inr_to_paise(str(raw_price)) or 0
-            raw_compare = p.get("compare_at_price_max") or p.get("compare_at_price")
-            mrp_paise = parse_inr_to_paise(str(raw_compare)) if raw_compare else None
-
-            # Available flag
-            available = bool(p.get("available", True))
-            path = p.get("url") or ""
-            deal_url = f"https://{domain}{path}" if path.startswith("/") else f"https://{domain}/products/{p.get('handle', '')}"
-
-            cand_weight = extract_weight_in_grams(title)
-            score, is_ok = compute_match_score(
-                query_title=query,
-                candidate_title=title,
-                target_weight_g=target_weight_g,
-                candidate_weight_g=cand_weight,
-            )
-
-            if is_ok and price_paise > 0:
-                p100g = int(round(price_paise * 100.0 / cand_weight)) if cand_weight else None
-                deals.append(
-                    StoreDeal(
-                        store_name=store_label,
-                        product_title=title,
-                        variant_title=f"{cand_weight}g" if cand_weight else "",
-                        price_paise=price_paise,
-                        mrp_paise=mrp_paise,
-                        available=available,
-                        url=deal_url,
-                        match_score=score,
-                        spec_weight_g=cand_weight,
-                        price_per_100g_paise=p100g,
+            # Variant inspection: fetch product JSON to evaluate exact size & flavour variants
+            variants = []
+            if handle:
+                try:
+                    p_res = await http_client.get(
+                        f"https://{domain}/products/{handle}.js",
+                        headers=_DEFAULT_HEADERS,
+                        timeout=4.0,
                     )
+                    if p_res.status_code == 200:
+                        variants = p_res.json().get("variants", [])
+                except Exception:
+                    pass
+
+            if variants:
+                for v in variants:
+                    v_title = v.get("title", "")
+                    full_name = f"{title} - {v_title}" if v_title and v_title != "Default Title" else title
+                    cand_weight = extract_weight_in_grams(v_title) or extract_weight_in_grams(title)
+                    score, is_ok = compute_match_score(
+                        query_title=query,
+                        candidate_title=full_name,
+                        target_weight_g=target_weight_g,
+                        candidate_weight_g=cand_weight,
+                    )
+                    price_paise = int(v.get("price", 0))
+                    raw_compare = v.get("compare_at_price")
+                    mrp_paise = int(raw_compare) if raw_compare else None
+
+                    if is_ok and price_paise > 0:
+                        p100g = int(round(price_paise * 100.0 / cand_weight)) if cand_weight else None
+                        deals.append(
+                            StoreDeal(
+                                store_name=store_label,
+                                product_title=title,
+                                variant_title=v_title,
+                                price_paise=price_paise,
+                                mrp_paise=mrp_paise,
+                                available=bool(v.get("available", True)),
+                                url=f"https://{domain}/products/{handle}?variant={v.get('id')}",
+                                match_score=score,
+                                spec_weight_g=cand_weight,
+                                price_per_100g_paise=p100g,
+                            )
+                        )
+            else:
+                raw_price = p.get("price") or 0
+                price_paise = parse_inr_to_paise(str(raw_price)) or 0
+                raw_compare = p.get("compare_at_price_max") or p.get("compare_at_price")
+                mrp_paise = parse_inr_to_paise(str(raw_compare)) if raw_compare else None
+
+                available = bool(p.get("available", True))
+                path = p.get("url") or ""
+                deal_url = f"https://{domain}{path}" if path.startswith("/") else f"https://{domain}/products/{handle}"
+
+                cand_weight = extract_weight_in_grams(title)
+                score, is_ok = compute_match_score(
+                    query_title=query,
+                    candidate_title=title,
+                    target_weight_g=target_weight_g,
+                    candidate_weight_g=cand_weight,
                 )
+
+                if is_ok and price_paise > 0:
+                    p100g = int(round(price_paise * 100.0 / cand_weight)) if cand_weight else None
+                    deals.append(
+                        StoreDeal(
+                            store_name=store_label,
+                            product_title=title,
+                            variant_title=f"{cand_weight}g" if cand_weight else "",
+                            price_paise=price_paise,
+                            mrp_paise=mrp_paise,
+                            available=available,
+                            url=deal_url,
+                            match_score=score,
+                            spec_weight_g=cand_weight,
+                            price_per_100g_paise=p100g,
+                        )
+                    )
     except Exception as exc:
         logger.debug("Shopify store search encountered error", domain=domain, error=str(exc))
 
@@ -250,7 +313,29 @@ def _search_amazon_sync(query: str, target_weight_g: Optional[int] = None) -> Li
         items = parser.css('div[data-component-type="s-search-result"]')
         for it in items[:15]:
             h2 = it.css_first("h2")
-            title = h2.text(strip=True) if h2 else ""
+            h2_text = h2.text(strip=True) if h2 else ""
+            title = ""
+            if h2:
+                for a in h2.css("a"):
+                    t = a.text(strip=True)
+                    if len(t) > len(title):
+                        title = t
+                if not title:
+                    for span in h2.css("span"):
+                        t = span.text(strip=True)
+                        if len(t) > len(title):
+                            title = t
+            if len(title) < 15:
+                for a in it.css("a.a-link-normal span"):
+                    t = a.text(strip=True)
+                    if len(t) > len(title) and "₹" not in t:
+                        title = t
+            if not title:
+                title = h2_text
+
+            if h2_text and h2_text.lower() not in title.lower() and len(h2_text) < 30:
+                title = f"{h2_text} {title}".strip()
+
             if not title:
                 continue
 
@@ -306,7 +391,7 @@ def _search_flipkart_sync(query: str, target_weight_g: Optional[int] = None) -> 
 
         parser = LexborHTMLParser(r.text)
         cards = parser.css('[data-id]')
-        for c in cards[:15]:
+        for c in cards[:20]:
             title_elem = c.css_first('a[title]')
             title = (
                 title_elem.attributes.get('title')
@@ -317,6 +402,10 @@ def _search_flipkart_sync(query: str, target_weight_g: Optional[int] = None) -> 
                 title = title.text(strip=True)
             if not title:
                 continue
+
+            subtitle_elem = c.css_first('.U_GKRr') or c.css_first('.NqEKJq') or c.css_first('.wjcEIp + div')
+            subtitle = subtitle_elem.text(strip=True) if subtitle_elem else ""
+            full_title = f"{title} {subtitle}".strip() if subtitle else title
 
             price_node = c.css_first('div._30jeq3') or c.css_first('div.Nx9bqj')
             if not price_node:
@@ -332,10 +421,10 @@ def _search_flipkart_sync(query: str, target_weight_g: Optional[int] = None) -> 
             href = link.attributes.get('href', "") if link else ""
             deal_url = f"https://www.flipkart.com{href.split('?')[0]}" if href else url
 
-            cand_weight = extract_weight_in_grams(title)
+            cand_weight = extract_weight_in_grams(full_title)
             score, is_ok = compute_match_score(
                 query_title=query,
-                candidate_title=title,
+                candidate_title=full_title,
                 target_weight_g=target_weight_g,
                 candidate_weight_g=cand_weight,
             )
@@ -345,7 +434,7 @@ def _search_flipkart_sync(query: str, target_weight_g: Optional[int] = None) -> 
                     StoreDeal(
                         store_name="Flipkart",
                         product_title=title,
-                        variant_title=f"{cand_weight}g" if cand_weight else "",
+                        variant_title=subtitle or (f"{cand_weight}g" if cand_weight else ""),
                         price_paise=price_paise,
                         available=True,
                         url=deal_url,
@@ -433,6 +522,98 @@ async def search_muscleblaze(query: str, target_weight_g: Optional[int] = None) 
     return deals
 
 
+async def search_nutrabay(query: str, target_weight_g: Optional[int] = None) -> List[StoreDeal]:
+    """Search Nutrabay catalog via Next.js SSR search results with TLS fallback."""
+    deals: List[StoreDeal] = []
+    enc_q = urllib.parse.quote_plus(query)
+    url = f"https://nutrabay.com/search?q={enc_q}"
+
+    html_text = ""
+    try:
+        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=6.0)
+        if resp.status_code == 200:
+            html_text = resp.text
+    except Exception:
+        pass
+
+    if not html_text:
+        def _fetch_nb() -> str:
+            try:
+                from curl_cffi import requests
+                r = requests.get(url, impersonate="chrome124", timeout=8)
+                return r.text if r.status_code == 200 else ""
+            except Exception:
+                return ""
+        html_text = await asyncio.to_thread(_fetch_nb)
+
+    if not html_text:
+        return deals
+
+    try:
+        parser = LexborHTMLParser(html_text)
+        script = parser.css_first('script#__NEXT_DATA__')
+        if not script:
+            return deals
+
+        data = json.loads(script.text())
+        results = (
+            data.get("props", {})
+            .get("pageProps", {})
+            .get("initialState", {})
+            .get("searchPage", {})
+            .get("ProductSearchListing", {})
+            .get("data", {})
+            .get("results", [])
+        )
+
+        for p in results[:15]:
+            name = p.get("name") or ""
+            if not name:
+                continue
+
+            weight_val = p.get("Weight") or p.get("product weight") or ""
+            flavour_val = p.get("Flavour") or ""
+            full_title = f"{name} {weight_val} {flavour_val}".strip()
+
+            raw_sp = p.get("discounted_price") or p.get("price") or 0
+            raw_mrp = p.get("price")
+            price_paise = parse_inr_to_paise(str(raw_sp)) or 0
+            mrp_paise = parse_inr_to_paise(str(raw_mrp)) if raw_mrp else None
+
+            is_in_stock = bool(p.get("stock_status", True))
+            slug = p.get("slug") or ""
+            deal_url = f"https://nutrabay.com/product/{slug}" if slug else url
+
+            cand_weight = extract_weight_in_grams(full_title)
+            score, is_ok = compute_match_score(
+                query_title=query,
+                candidate_title=full_title,
+                target_weight_g=target_weight_g,
+                candidate_weight_g=cand_weight,
+            )
+
+            if is_ok and price_paise > 0:
+                p100g = int(round(price_paise * 100.0 / cand_weight)) if cand_weight else None
+                deals.append(
+                    StoreDeal(
+                        store_name="Nutrabay",
+                        product_title=name,
+                        variant_title=f"{weight_val} - {flavour_val}".strip(" -"),
+                        price_paise=price_paise,
+                        mrp_paise=mrp_paise,
+                        available=is_in_stock,
+                        url=deal_url,
+                        match_score=score,
+                        spec_weight_g=cand_weight,
+                        price_per_100g_paise=p100g,
+                    )
+                )
+    except Exception as exc:
+        logger.debug("Nutrabay search encountered error", query=query, error=str(exc))
+
+    return deals
+
+
 @cache(ttl="3m", key="all_stores:{query}:{target_weight_g}", lock=True)
 async def query_all_stores(
     query: str,
@@ -444,6 +625,7 @@ async def query_all_stores(
         search_amazon(query, target_weight_g=target_weight_g),
         search_hyugalife(query, target_weight_g=target_weight_g),
         search_healthkart(query, target_weight_g=target_weight_g),
+        search_nutrabay(query, target_weight_g=target_weight_g),
         search_muscleblaze(query, target_weight_g=target_weight_g),
         search_shopify_store("nakpro.com", "Nakpro Direct", query, target_weight_g=target_weight_g),
         search_shopify_store("asitisnutrition.com", "AS-IT-IS Direct", query, target_weight_g=target_weight_g),

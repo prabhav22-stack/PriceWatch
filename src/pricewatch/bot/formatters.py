@@ -232,16 +232,23 @@ def format_comparison_report(result: ComparisonResult) -> str:
     elif not any(d.available for d in result.deals):
         lines.append("⚠️ <b>Stock Alert:</b> <i>This product appears to be Out of Stock across all checked stores right now.</i>\n")
 
-    # 2. Ranked Breakdown by Store
+    # 2. Ranked Breakdown by Store (cheapest in-stock on top)
     lines.append(f"📊 <b>Stores Comparison ({len(result.deals)} checked):</b>")
     for i, deal in enumerate(result.deals, start=1):
         stock_emoji = "🟢" if deal.available else "🔴"
         stock_text = "In Stock" if deal.available else "Out of Stock"
         price_str = format_paise_to_inr(deal.price_paise) if deal.price_paise > 0 else "N/A"
+        mrp_str = (
+            f" <s>{format_paise_to_inr(deal.mrp_paise)}</s>"
+            if deal.mrp_paise and deal.price_paise and deal.mrp_paise > deal.price_paise
+            else ""
+        )
         badge = " 🏆 <b>CHEAPEST</b>" if deal.is_best_deal else ""
 
-        store_line = f"{i}. {stock_emoji} <b>{deal.store_name}:</b> <code>{price_str}</code> ({stock_text}){badge}"
+        store_line = f"{i}. {stock_emoji} <b>{deal.store_name}:</b> <code>{price_str}</code>{mrp_str} ({stock_text}){badge}"
         lines.append(store_line)
+        if deal.variant_title:
+            lines.append(f"   🏷️ <i>{deal.variant_title}</i>")
         if deal.url:
             lines.append(f"   🔗 <a href='{deal.url}'>View on {deal.store_name}</a>")
 

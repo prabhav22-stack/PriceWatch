@@ -84,8 +84,15 @@ def extract_weight_in_grams(text: str) -> Optional[int]:
         except (ValueError, TypeError):
             pass
 
-    # 2. Grams pattern: e.g. 20 g, 20g, 500 gm, 250gms, 1000 grams
-    g_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:g|gm|gms|grams?)\b", s)
+    # 2. Strip nutritional metrics like "26g protein", "5.3g bcaa", "3g creatine"
+    clean_s = re.sub(
+        r"\b\d+(?:\.\d+)?\s*(?:g|gm|gms|grams?)\s*(?:protein|bcaa|eaa|creatine|sugar|fat|carbs?|dietary|fiber|glutamine)\b",
+        " ",
+        s,
+    )
+
+    # 3. Grams pattern: e.g. 20 g, 20g, 500 gm, 250gms, 1000 grams
+    g_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:g|gm|gms|grams?)\b", clean_s)
     if g_match:
         try:
             val = float(g_match.group(1))
@@ -95,16 +102,16 @@ def extract_weight_in_grams(text: str) -> Optional[int]:
         except (ValueError, TypeError):
             pass
 
-    # 3. LBS pattern: e.g. 2.2 lbs, 1 lb, 4.4lbs
-    lb_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?)\b", s)
+    # 4. LBS pattern: e.g. 2.2 lbs, 2.2 lb, 1 lb, 4.4lbs
+    lb_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?)\b", clean_s)
     if lb_match:
         try:
             return int(round(float(lb_match.group(1)) * 453.592))
         except (ValueError, TypeError):
             pass
 
-    # 4. Count/Capsules pattern if weight isn't specified: e.g. 60 tabs, 90 capsules
-    cnt_match = re.search(r"(\d+)\s*(?:tabs?|tablets?|caps?|capsules?|veg\s*caps?)\b", s)
+    # 5. Count/Capsules pattern if weight isn't specified: e.g. 60 tabs, 90 capsules
+    cnt_match = re.search(r"(\d+)\s*(?:tabs?|tablets?|caps?|capsules?|veg\s*caps?)\b", clean_s)
     if cnt_match:
         try:
             return int(cnt_match.group(1))
