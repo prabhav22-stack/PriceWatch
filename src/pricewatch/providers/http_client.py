@@ -103,6 +103,14 @@ class ResilientHttpClient:
         try:
             resp = await client.get(url, headers=req_headers, timeout=req_timeout)
             return resp
+        except (AttributeError, RuntimeError):
+            # Underlying transport was closed or detached from event loop; recreate client
+            self._client = None
+            fresh_client = await self.get_client()
+            try:
+                return await fresh_client.get(url, headers=req_headers, timeout=req_timeout)
+            except httpx.HTTPError as exc:
+                raise ExtractionError(f"HTTP request failed for {url}: {exc}") from exc
         except httpx.HTTPError as exc:
             raise ExtractionError(f"HTTP request failed for {url}: {exc}") from exc
 
