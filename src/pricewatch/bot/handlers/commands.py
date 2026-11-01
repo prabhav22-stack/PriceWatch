@@ -1094,23 +1094,34 @@ async def history_command_handler(update: Update, context: ContextTypes.DEFAULT_
         target_price_paise=target_paise,
     )
 
+    from pricewatch.services.sparkline import format_price_trend_summary
+    obs_prices = [obs.price_paise for obs in observations if obs.price_paise]
+    trend_line = format_price_trend_summary(obs_prices, listing.last_price_paise) or ""
+
     if not chart_bytes:
-        await status_msg.edit_text(
-            f"⚠️ Insufficient price history data recorded yet for <b>{listing.product_title}</b>.\n"
-            "Checks run automatically every 15 minutes!",
-            parse_mode="HTML",
+        msg = (
+            f"📈 <b>Price History: {html.escape(listing.product_title)}</b>\n\n"
+            f"💰 <b>Current:</b> ₹{(listing.last_price_paise or 0)/100:,.0f} | "
+            f"🎯 <b>Target:</b> ₹{(target_paise or 0)/100:,.0f}\n\n"
         )
+        if trend_line:
+            msg += f"{trend_line}\n\n"
+        msg += f"🔗 <a href='{listing.canonical_url}'>Open Store Page</a>"
+        await status_msg.edit_text(msg, parse_mode="HTML")
         return
 
     await status_msg.delete()
+    caption_parts = [
+        f"📈 <b>Price History: {html.escape(listing.product_title)}</b>",
+        f"💰 <b>Current:</b> ₹{(listing.last_price_paise or 0)/100:,.0f} | 🎯 <b>Target:</b> ₹{(target_paise or 0)/100:,.0f}",
+    ]
+    if trend_line:
+        caption_parts.append(trend_line)
+    caption_parts.append(f"🔗 <a href='{listing.canonical_url}'>Open Store Page</a>")
+
     await update.effective_message.reply_photo(
         photo=chart_bytes,
-        caption=(
-            f"📊 <b>Price History: {listing.product_title}</b>\n"
-            f"💰 <b>Current:</b> ₹{(listing.last_price_paise or 0)/100:,.0f} | "
-            f"🎯 <b>Target:</b> ₹{(target_paise or 0)/100:,.0f}\n"
-            f"🔗 <a href='{listing.canonical_url}'>Open Store Page</a>"
-        ),
+        caption="\n".join(caption_parts),
         parse_mode="HTML",
     )
 

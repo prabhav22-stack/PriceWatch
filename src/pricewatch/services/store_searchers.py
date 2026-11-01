@@ -116,14 +116,8 @@ async def search_healthkart(query: str, target_weight_g: Optional[int] = None) -
         pass
 
     if not html_text:
-        def _fetch_hk() -> str:
-            try:
-                from curl_cffi import requests
-                r = requests.get(url, impersonate="chrome124", timeout=8)
-                return r.text if r.status_code == 200 else ""
-            except Exception:
-                return ""
-        html_text = await asyncio.to_thread(_fetch_hk)
+        from pricewatch.services.crawlee_scraper import crawlee_fetcher
+        html_text = await crawlee_fetcher.fetch_html(url, headers=_DEFAULT_HEADERS, timeout_secs=8.0) or ""
 
     if not html_text:
         return deals
@@ -537,14 +531,8 @@ async def search_nutrabay(query: str, target_weight_g: Optional[int] = None) -> 
         pass
 
     if not html_text:
-        def _fetch_nb() -> str:
-            try:
-                from curl_cffi import requests
-                r = requests.get(url, impersonate="chrome124", timeout=8)
-                return r.text if r.status_code == 200 else ""
-            except Exception:
-                return ""
-        html_text = await asyncio.to_thread(_fetch_nb)
+        from pricewatch.services.crawlee_scraper import crawlee_fetcher
+        html_text = await crawlee_fetcher.fetch_html(url, headers=_DEFAULT_HEADERS, timeout_secs=8.0) or ""
 
     if not html_text:
         return deals

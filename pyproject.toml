@@ -32,6 +32,10 @@ dependencies = [
     "uvicorn>=0.50.0",
     "prometheus-client>=0.25.0",
     "sentry-sdk>=2.70.0",
+    "datasketch>=2.0.0",
+    "crawlee[httpx]>=1.11.0",
+    "pytesseract>=0.3.13",
+    "paddleocr>=3.7.0",
 ]
 
 [project.optional-dependencies]

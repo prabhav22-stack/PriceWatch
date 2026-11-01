@@ -139,21 +139,53 @@ class VisionExtractor:
 
     @classmethod
     async def _extract_via_local_ocr(cls, image_bytes: bytes) -> Optional[VisionExtractedProduct]:
-        """Extract product info offline using Windows Native OCR (winocr) or Pillow heuristics."""
+        """Extract product info offline using multiplatform OCR (winocr, pytesseract, or PaddleOCR)."""
+        lines: List[str] = []
+        full_text: str = ""
+
+        # Tier 1: Windows Native OCR (winocr)
         try:
             import winocr
-        except ImportError:
-            logger.info("winocr not installed, offline OCR unavailable")
+            img = Image.open(io.BytesIO(image_bytes))
+            ocr_res = await winocr.recognize_pil(img)
+            lines = [l.text.strip() for l in ocr_res.lines if l.text.strip()]
+            full_text = ocr_res.text or " ".join(lines)
+        except Exception:
+            pass
+
+        # Tier 2: pytesseract (Cross-platform Linux / Windows fallback)
+        if not lines:
+            try:
+                import pytesseract
+                img = Image.open(io.BytesIO(image_bytes))
+                raw_text = pytesseract.image_to_string(img)
+                lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+                full_text = " ".join(lines)
+            except Exception:
+                pass
+
+        # Tier 3: PaddleOCR (Lightweight CPU OCR fallback)
+        if not lines:
+            try:
+                from paddleocr import PaddleOCR
+                import numpy as np
+                img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                img_np = np.array(img)
+                ocr = PaddleOCR(use_angle_cls=False, lang="en", show_log=False)
+                result = ocr.ocr(img_np, cls=False)
+                if result and result[0]:
+                    for line_data in result[0]:
+                        txt = line_data[1][0].strip()
+                        if txt:
+                            lines.append(txt)
+                    full_text = " ".join(lines)
+            except Exception:
+                pass
+
+        if not lines:
             return None
 
         try:
-            img = Image.open(io.BytesIO(image_bytes))
-            ocr_res = await winocr.recognize_pil(img)
-            lines: List[str] = [l.text.strip() for l in ocr_res.lines if l.text.strip()]
-            full_text: str = ocr_res.text or " ".join(lines)
-            if not lines:
-                return None
-
             title: Optional[str] = None
             detected_brand: Optional[str] = None
             detected_store: Optional[str] = None

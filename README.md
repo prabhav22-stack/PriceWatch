@@ -1,7 +1,7 @@
 # PriceWatch 2.1 🎯⚡
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%20%7C%203.15-blue.svg)](https://www.python.org/)
-[![Tests Passing](https://img.shields.io/badge/tests-162%20passed-brightgreen.svg)](tests/)
+[![Tests Passing](https://img.shields.io/badge/tests-179%20passed-brightgreen.svg)](tests/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram-@wheypricewatch__bot-blue?logo=telegram)](https://t.me/wheypricewatch_bot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)

@@ -218,7 +218,7 @@ def format_comparison_report(result: ComparisonResult) -> str:
 
     lines.append("")
 
-    # 1. Best Deal Banner
+    # 1. Best Deal Banner & Deal Intelligence (amazon-buddy pattern)
     if result.best_deal:
         bd = result.best_deal
         bd_price = format_paise_to_inr(bd.price_paise)
@@ -228,6 +228,18 @@ def format_comparison_report(result: ComparisonResult) -> str:
         if bd.savings_paise and bd.savings_paise > 0 and result.reference_store:
             sav_str = format_paise_to_inr(bd.savings_paise)
             lines.append(f"💡 <i>Save {sav_str} compared to {result.reference_store}!</i>")
+
+        # Deal Intelligence Evaluation
+        from pricewatch.services.deal_intelligence import deal_intelligence
+        all_store_prices = [d.price_paise for d in result.deals if d.price_paise > 0]
+        deal_score = deal_intelligence.evaluate_deal(
+            selling_price_paise=bd.price_paise,
+            mrp_paise=bd.mrp_paise,
+            all_store_prices_paise=all_store_prices,
+        )
+        lines.append(f"🎯 <b>Deal Quality:</b> {deal_score.badge} <b>{deal_score.verdict}</b> (Score: <b>{deal_score.score}/10</b>)")
+        if deal_score.is_fake_discount:
+            lines.append("   ⚠️ <i>Note: Advertised MRP is inflated above normal market rates.</i>")
         lines.append("")
     elif not any(d.available for d in result.deals):
         lines.append("⚠️ <b>Stock Alert:</b> <i>This product appears to be Out of Stock across all checked stores right now.</i>\n")
@@ -253,6 +265,8 @@ def format_comparison_report(result: ComparisonResult) -> str:
             lines.append(f"   🔗 <a href='{deal.url}'>View on {deal.store_name}</a>")
 
     lines.append("")
+    if len(result.deals) < 3:
+        lines.append("💡 <i>Tip: For broader store coverage across all flavours, try searching without flavour (e.g. <code>/compare Nakpro Perform 1kg</code>).</i>\n")
     lines.append("<i>💡 Tap a store button below to switch tracking or set an alert for that store.</i>")
     return "\n".join(lines)
 
@@ -278,6 +292,18 @@ def format_instock_report(result: ComparisonResult) -> str:
     if in_stock_deals:
         plural = "s" if len(in_stock_deals) > 1 else ""
         lines.append(f"🟢 <b>IN STOCK at {len(in_stock_deals)} store{plural} right now!</b>\n")
+        
+        # Best In-Stock Deal Evaluation
+        best_in_stock = in_stock_deals[0]
+        from pricewatch.services.deal_intelligence import deal_intelligence
+        all_prices = [d.price_paise for d in in_stock_deals if d.price_paise > 0]
+        d_score = deal_intelligence.evaluate_deal(
+            selling_price_paise=best_in_stock.price_paise,
+            mrp_paise=best_in_stock.mrp_paise,
+            all_store_prices_paise=all_prices,
+        )
+        lines.append(f"🎯 <b>Top Deal Quality:</b> {d_score.badge} <b>{d_score.verdict}</b> (Score: <b>{d_score.score}/10</b>)\n")
+
         for i, deal in enumerate(in_stock_deals, start=1):
             price_str = format_paise_to_inr(deal.price_paise)
             mrp_str = (
@@ -293,6 +319,8 @@ def format_instock_report(result: ComparisonResult) -> str:
                 lines.append(f"   🔗 <a href='{deal.url}'>Direct Purchase Link</a>")
 
         lines.append("")
+        if len(in_stock_deals) < 3:
+            lines.append("💡 <i>Tip: For broader store coverage across all flavours, try searching without flavour (e.g. <code>/instock Nakpro Perform 1kg</code>).</i>\n")
         lines.append("<i>💡 Tap a button below to open the store directly or start tracking alerts.</i>")
     else:
         stores_cnt = max(result.stores_checked, len(result.deals), 3)
