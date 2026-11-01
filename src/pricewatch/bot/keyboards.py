@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import List, Optional, Sequence, Set
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from pricewatch.domain.models import CanonicalListing, User, VariantOption
+from pricewatch.domain.models import CanonicalListing, ComparisonResult, User, VariantOption
 from pricewatch.validation.normalizer import format_paise_to_inr
 
 
@@ -104,6 +104,9 @@ def build_tracking_mode_keyboard(
         [
             InlineKeyboardButton("🎯 Set Custom Target Price", callback_data=f"trk_mode:{listing_id}:target"),
         ],
+        [
+            InlineKeyboardButton("🔍 Compare Across Stores", callback_data=f"cmp:{listing_id}"),
+        ],
     ]
     if is_nutrabay:
         rows.append([
@@ -151,6 +154,9 @@ def build_listing_card_keyboard(listing_id: int, is_nutrabay: bool = False) -> I
             InlineKeyboardButton("📊 View Price Chart", callback_data=f"chart:{listing_id}"),
             InlineKeyboardButton("🗑️ Untrack", callback_data=f"del:confirm:{listing_id}"),
         ],
+        [
+            InlineKeyboardButton("🔍 Compare Across Stores", callback_data=f"cmp:{listing_id}"),
+        ],
     ]
     if is_nutrabay:
         rows.append([
@@ -160,6 +166,31 @@ def build_listing_card_keyboard(listing_id: int, is_nutrabay: bool = False) -> I
         InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"),
         InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"),
     ])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_comparison_keyboard(
+    result: ComparisonResult,
+    listing_id: Optional[int] = None,
+) -> InlineKeyboardMarkup:
+    """Buttons for multi-store price comparison results."""
+    rows: List[List[InlineKeyboardButton]] = []
+
+    # Direct store links (top 3)
+    top_deals = [d for d in result.deals if d.url][:3]
+    for d in top_deals:
+        p_str = format_paise_to_inr(d.price_paise) if d.price_paise else ""
+        icon = "🟢" if d.available else "🔴"
+        label = f"{icon} {d.store_name} ({p_str})"
+        rows.append([InlineKeyboardButton(f"🛒 Open {label}", url=d.url)])
+
+    action_row = []
+    if listing_id:
+        action_row.append(InlineKeyboardButton("🔄 Refresh Deals", callback_data=f"cmp:{listing_id}"))
+    action_row.append(InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"))
+    action_row.append(InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"))
+    rows.append(action_row)
+
     return InlineKeyboardMarkup(rows)
 
 

@@ -12,6 +12,7 @@ from pricewatch.bot.formatters import (
     format_amul_favourites_messages,
     format_amul_search_messages,
     format_amul_tracking_confirmed,
+    format_comparison_report,
     format_nutrabay_stock_report,
     format_settings_menu,
     format_stepwise_product_preview,
@@ -25,6 +26,7 @@ from pricewatch.bot.keyboards import (
     build_amul_category_keyboard,
     build_amul_product_stock_keyboard,
     build_category_navigation_keyboard,
+    build_comparison_keyboard,
     build_listing_card_keyboard,
     build_pincode_keyboard,
     build_search_suggestions_keyboard,
@@ -38,6 +40,7 @@ from pricewatch.logging_setup import get_logger
 from pricewatch.providers.amul import AMUL_CATEGORIES, AmulProvider
 from pricewatch.services.amul_stock_tracker import AmulStockTracker
 from pricewatch.services.chart_service import ChartService
+from pricewatch.services.discovery_service import DiscoveryService
 from pricewatch.services.tracker_service import TrackerService
 
 logger = get_logger("callbacks")
@@ -230,6 +233,33 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             except Exception as exc:
                 if "Message is not modified" not in str(exc):
                     raise
+            return
+
+        # 3c. Multi-Store Discovery & Price Comparison: cmp:<listing_id>
+        if data.startswith("cmp:"):
+            listing_id = int(data.split(":")[1])
+            listing = await tracker_service.get_listing(listing_id)
+            if not listing:
+                await query.answer("Listing not found.", show_alert=True)
+                return
+
+            try:
+                await query.answer("🔍 Searching stores for best price & stock...")
+            except Exception:
+                pass
+
+            discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+            try:
+                result = await discovery_service.compare_listing(listing)
+                report_text = format_comparison_report(result)
+                kb = build_comparison_keyboard(result, listing_id=listing.id)
+                await query.edit_message_text(report_text, reply_markup=kb, parse_mode="HTML")
+            except Exception as exc:
+                logger.warning("Error running cross-store comparison callback", error=str(exc))
+                await query.edit_message_text(
+                    f"❌ <b>Comparison failed:</b> {exc}",
+                    parse_mode="HTML",
+                )
             return
 
         # 4. Untrack confirmation / deletion

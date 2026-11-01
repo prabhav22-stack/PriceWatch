@@ -13,6 +13,7 @@ from pricewatch.bot.formatters import (
     format_amul_search_messages,
     format_amul_tracking_confirmed,
     format_auto_order_overview,
+    format_comparison_report,
     format_help_message,
     format_settings_menu,
     format_stepwise_product_preview,
@@ -24,6 +25,7 @@ from pricewatch.bot.keyboards import (
     build_action_nav_keyboard,
     build_amul_category_keyboard,
     build_category_navigation_keyboard,
+    build_comparison_keyboard,
     build_listing_card_keyboard,
     build_pincode_keyboard,
     build_repeat_keyboard,
@@ -43,6 +45,7 @@ from pricewatch.services.amul_auto_order import AmulAutoOrderService
 from pricewatch.services.amul_stock_tracker import AmulStockTracker
 from pricewatch.services.chart_service import ChartService
 from pricewatch.services.check_orchestrator import CheckOrchestrator
+from pricewatch.services.discovery_service import DiscoveryService
 from pricewatch.services.tracker_service import TrackerService
 from pricewatch.utils.time_utils import format_ist_datetime
 from pricewatch.validation.normalizer import parse_inr_to_paise
@@ -313,6 +316,46 @@ async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     except Exception as exc:
         await status_msg.edit_text(f"❌ <b>Failed to track product:</b>\n{exc}", parse_mode="HTML")
+
+
+async def compare_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /compare [url or product name] to find where it is in stock and at the lowest price."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+    args = context.args if isinstance(context.args, list) else []
+
+    if not args:
+        context.user_data["awaiting_compare_query"] = True
+        kb = build_action_nav_keyboard("❌ Cancel", "trk:cancel", "🏠 Main Menu", "nav:home", include_home=False)
+        await update.effective_message.reply_html(
+            "🔍 <b>Find Best Price Across Stores</b>\n\n"
+            "Please send the product name or store link you want to compare.\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>Nutrabay Pure Shilajit 20g</code>\n"
+            "• <code>Nakpro Perform Whey 1kg</code>\n"
+            "• Or paste any product link (Nutrabay, Amazon, HyugaLife, etc.)",
+            reply_markup=kb,
+        )
+        return
+
+    query_str = " ".join(args).strip()
+    status_msg = await update.effective_message.reply_html(
+        f"🔍 <i>Searching across trusted stores for best price and stock:</i>\n<b>{html.escape(query_str)}</b>..."
+    )
+
+    try:
+        result = await discovery_service.compare_query(query_str)
+        report_text = format_comparison_report(result)
+        kb = build_comparison_keyboard(result)
+        await status_msg.edit_text(report_text, reply_markup=kb, parse_mode="HTML")
+    except Exception as exc:
+        safe_exc = html.escape(str(exc))
+        await status_msg.edit_text(
+            f"❌ <b>Price comparison error:</b>\n{safe_exc}\n\nPlease try again with a simpler product name or direct link.",
+            parse_mode="HTML",
+        )
 
 
 async def list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -987,7 +1030,27 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.effective_message.reply_html(f"❌ Failed to set target price: {exc}")
             return
 
-    # 2. Check if user is awaiting URL or message contains a product URL
+    # 2. Check if user is in /compare query input state
+    if context.user_data.pop("awaiting_compare_query", False):
+        discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+        status_msg = await update.effective_message.reply_html(
+            f"🔍 <i>Searching across trusted stores for:</i>\n<b>{html.escape(text)}</b>..."
+        )
+        try:
+            result = await discovery_service.compare_query(text)
+            report_text = format_comparison_report(result)
+            kb = build_comparison_keyboard(result)
+            await status_msg.edit_text(report_text, reply_markup=kb, parse_mode="HTML")
+            return
+        except Exception as exc:
+            safe_exc = html.escape(str(exc))
+            await status_msg.edit_text(
+                f"❌ <b>Price comparison error:</b>\n{safe_exc}",
+                parse_mode="HTML",
+            )
+            return
+
+    # 3. Check if user is awaiting URL or message contains a product URL
     is_awaiting_url = context.user_data.pop("awaiting_track_url", False)
     url_match = re.search(r"https?://[^\s]+", text)
     if url_match:

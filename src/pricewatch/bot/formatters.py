@@ -2,7 +2,13 @@
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from pricewatch.domain.models import CanonicalListing, Subscription, User
+from pricewatch.domain.models import (
+    CanonicalListing,
+    ComparisonResult,
+    StoreDeal,
+    Subscription,
+    User,
+)
 from pricewatch.utils.time_utils import (
     format_duration,
     format_ist_datetime,
@@ -176,6 +182,50 @@ def format_nutrabay_stock_report(listing: CanonicalListing, quote: Optional[Any]
         lines.append("")
 
     lines.append("⚡ <i>PriceWatch monitors Nutrabay in real-time and alerts you instantly when restocked!</i>")
+    return "\n".join(lines)
+
+
+def format_comparison_report(result: ComparisonResult) -> str:
+    """Format cross-store price comparison and discovery results."""
+    lines = [
+        "🔍 <b>Multi-Store Price & Stock Comparison</b>",
+        f"📦 <b>Product:</b> {result.query_title}",
+    ]
+    if result.target_weight_g:
+        w_str = f"{result.target_weight_g // 1000}kg" if result.target_weight_g >= 1000 and result.target_weight_g % 1000 == 0 else f"{result.target_weight_g}g"
+        lines.append(f"⚖️ <b>Spec / Size:</b> {w_str}")
+
+    lines.append("")
+
+    # 1. Best Deal Banner
+    if result.best_deal:
+        bd = result.best_deal
+        bd_price = format_paise_to_inr(bd.price_paise)
+        bd_mrp = f" <s>{format_paise_to_inr(bd.mrp_paise)}</s>" if bd.mrp_paise and bd.mrp_paise > bd.price_paise else ""
+        lines.append("🏆 <b>Best Available Deal:</b>")
+        lines.append(f"👉 <b>{bd.store_name}:</b> <code>{bd_price}</code>{bd_mrp} (🟢 <b>In Stock</b>)")
+        if bd.savings_paise and bd.savings_paise > 0 and result.reference_store:
+            sav_str = format_paise_to_inr(bd.savings_paise)
+            lines.append(f"💡 <i>Save {sav_str} compared to {result.reference_store}!</i>")
+        lines.append("")
+    elif not any(d.available for d in result.deals):
+        lines.append("⚠️ <b>Stock Alert:</b> <i>This product appears to be Out of Stock across all checked stores right now.</i>\n")
+
+    # 2. Ranked Breakdown by Store
+    lines.append(f"📊 <b>Stores Comparison ({len(result.deals)} checked):</b>")
+    for i, deal in enumerate(result.deals, start=1):
+        stock_emoji = "🟢" if deal.available else "🔴"
+        stock_text = "In Stock" if deal.available else "Out of Stock"
+        price_str = format_paise_to_inr(deal.price_paise) if deal.price_paise > 0 else "N/A"
+        badge = " 🏆 <b>CHEAPEST</b>" if deal.is_best_deal else ""
+
+        store_line = f"{i}. {stock_emoji} <b>{deal.store_name}:</b> <code>{price_str}</code> ({stock_text}){badge}"
+        lines.append(store_line)
+        if deal.url:
+            lines.append(f"   🔗 <a href='{deal.url}'>View on {deal.store_name}</a>")
+
+    lines.append("")
+    lines.append("<i>💡 Tap a store button below to switch tracking or set an alert for that store.</i>")
     return "\n".join(lines)
 
 

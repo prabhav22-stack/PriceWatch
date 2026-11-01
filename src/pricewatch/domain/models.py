@@ -176,3 +176,35 @@ class NotificationLog(BaseModel):
     error_detail: Optional[str] = None
     created_at: Optional[datetime] = None
     sent_at: Optional[datetime] = None
+
+
+class StoreDeal(BaseModel):
+    """Product quote from an individual store participating in price comparison."""
+    model_config = ConfigDict(frozen=True)
+
+    store_name: str
+    product_title: str
+    variant_title: str = ""
+    price_paise: int
+    mrp_paise: Optional[int] = None
+    available: bool = True
+    url: str
+    match_score: float = 1.0
+    spec_weight_g: Optional[int] = None
+    price_per_100g_paise: Optional[int] = None
+    savings_paise: Optional[int] = None
+    is_best_deal: bool = False
+
+
+class ComparisonResult(BaseModel):
+    """Aggregated multi-store comparison and discovery report."""
+    model_config = ConfigDict(frozen=True)
+
+    query_title: str
+    target_weight_g: Optional[int] = None
+    reference_price_paise: Optional[int] = None
+    reference_store: Optional[str] = None
+    best_deal: Optional[StoreDeal] = None
+    deals: List[StoreDeal] = Field(default_factory=list)
+    stores_checked: int = 0
+

@@ -43,6 +43,7 @@ from pricewatch.bot.handlers.commands import (
     analytics_command_handler,
     autoorder_command_handler,
     check_command_handler,
+    compare_command_handler,
     favourites_command_handler,
     help_handler,
     history_command_handler,
@@ -63,6 +64,7 @@ from pricewatch.bot.handlers.commands import (
     untrack_handler,
 )
 from pricewatch.config import settings
+from pricewatch.services.discovery_service import DiscoveryService
 from pricewatch.services.tracker_service import TrackerService
 
 
@@ -85,11 +87,13 @@ def create_telegram_app(
 
     # Inject domain service into bot_data
     app.bot_data["tracker_service"] = tracker_service
+    app.bot_data["discovery_service"] = DiscoveryService()
 
     # Register Command Handlers
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CommandHandler("help", help_handler))
     app.add_handler(CommandHandler("track", track_handler))
+    app.add_handler(CommandHandler("compare", compare_command_handler))
     app.add_handler(CommandHandler("trackall", trackall_command_handler))
     app.add_handler(CommandHandler("list", list_handler))
     app.add_handler(CommandHandler("tracked", list_handler))
