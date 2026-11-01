@@ -4,7 +4,7 @@ Matches the native Telegram bot menu button shown in the user's interface.
 """
 
 from typing import List
-from telegram import Bot, BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeDefault, MenuButtonCommands
+from telegram import Bot, BotCommand, MenuButtonCommands
 
 from pricewatch.logging_setup import get_logger
 
@@ -38,13 +38,9 @@ DEFAULT_BOT_COMMANDS: List[BotCommand] = [
 
 
 async def configure_bot_menu_button(bot: Bot) -> None:
-    """Set the native bot commands across default and private chat scopes and attach menu button."""
+    """Set the native bot commands and attach the chat menu button."""
     try:
-        # 1. Register for default scope (fallback for all chats)
-        await bot.set_my_commands(DEFAULT_BOT_COMMANDS, scope=BotCommandScopeDefault())
-        # 2. Register explicitly for all private 1-on-1 chats (primary bot interaction)
-        await bot.set_my_commands(DEFAULT_BOT_COMMANDS, scope=BotCommandScopeAllPrivateChats())
-        # 3. Attach native Menu Button to open commands list
+        await bot.set_my_commands(DEFAULT_BOT_COMMANDS)
         await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
         logger.info("Successfully configured Telegram bot menu commands and button")
     except Exception as exc:
