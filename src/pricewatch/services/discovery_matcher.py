@@ -39,7 +39,7 @@ NOISE_WORDS = {
     "100%", "pure", "natural", "original", "authentic", "premium", "best",
     "clinically", "tested", "proven", "certified", "ayurvedic", "himalayan",
     "supplement", "high", "quality", "for", "men", "women", "adults",
-    "organic", "grade", "gold", "super", "daily", "boost", "booster",
+    "organic", "grade", "super", "daily", "boost", "booster",
     "with", "and", "pro", "advanced", "ultra", "extra", "strength",
 }
 
@@ -53,6 +53,84 @@ CORE_PRODUCT_CATEGORIES = {
     "bar", "cookie", "lassi", "shake", "milkshake", "paneer",
     "buttermilk", "vinegar", "thistle", "glucosamine", "carnitine",
 }
+
+# Product series / brand sub-lines to prevent cross-series substitutions (e.g. Perform vs Impact vs Gold)
+PRODUCT_SERIES_FAMILIES = {
+    "perform": {"perform", "performance"},
+    "impact": {"impact"},
+    "platinum": {"platinum"},
+    "gold": {"gold", "whey gold", "gold standard"},
+    "titanium": {"titanium"},
+    "biozyme": {"biozyme"},
+    "fuelone": {"fuelone", "fuel one"},
+    "serious_mass": {"serious mass"},
+    "nitro_tech": {"nitro tech", "nitrotech"},
+    "iso100": {"iso100", "iso 100"},
+    "isoflex": {"isoflex"},
+    "raw_whey": {"raw whey", "raw"},
+    "grass_fed": {"grass fed", "grass-fed"},
+    "rage_x": {"ragex", "rage x"},
+}
+
+# Flavours to guard against flavour mismatch (e.g. Unflavoured vs Chocolate/Malai Kulfi)
+SWEET_FLAVOURS = {
+    "chocolate", "choco", "double rich chocolate", "dark chocolate", "fudge",
+    "malai kulfi", "kulfi", "coffee", "cafe mocha", "mocha", "cappuccino", "latte",
+    "vanilla", "french vanilla", "mango", "alphonso", "banana",
+    "cookies & cream", "cookies and cream", "cookies cream", "cookie",
+    "strawberry", "berry", "kesar pista", "pista", "pistachio", "salted caramel", "caramel",
+    "tangy orange", "orange", "fruit punch", "watermelon", "blueberry", "hazelnut",
+}
+UNFLAVOURED_TERMS = {"unflavoured", "unflavored", "raw unflavoured", "plain"}
+
+# Combo / Bundle indicator keywords
+COMBO_TERMS = (
+    "combo", "bundle", "pack of", "shaker", "free shaker", "with shaker",
+    "+ creatine", "with creatine", "+ 100g creatine", "+creatine",
+    "+ shaker", "+shaker", "bottle combo", "shaker bottle",
+)
+
+
+def extract_product_series(text: str) -> set:
+    """Extract known product series/sub-brand lines present in text."""
+    if not text:
+        return set()
+    low = text.lower()
+    found = set()
+    for s_key, aliases in PRODUCT_SERIES_FAMILIES.items():
+        for a in aliases:
+            if re.search(rf"\b{re.escape(a)}\b", low):
+                found.add(s_key)
+                break
+    return found
+
+
+def extract_sweet_flavours(text: str) -> set:
+    """Extract sweet flavours present in text."""
+    if not text:
+        return set()
+    low = text.lower()
+    found = set()
+    for f in SWEET_FLAVOURS:
+        if re.search(rf"\b{re.escape(f)}\b", low):
+            found.add(f)
+    return found
+
+
+def has_unflavoured_spec(text: str) -> bool:
+    """Check if text explicitly specifies unflavoured / plain."""
+    if not text:
+        return False
+    low = text.lower()
+    return any(re.search(rf"\b{re.escape(u)}\b", low) for u in UNFLAVOURED_TERMS)
+
+
+def is_bundle_or_combo(text: str) -> bool:
+    """Check if text represents an unsolicited combo or bundle."""
+    if not text:
+        return False
+    low = text.lower()
+    return any(term in low for term in COMBO_TERMS)
 
 
 def extract_core_categories(text: str) -> set:
@@ -185,7 +263,47 @@ def compute_match_score(
         if not has_cat_match:
             return 0.10, False
 
-    # 3. Non-Brand Token Coverage Check
+    # 3. Product Series Guard (e.g. Nakpro Perform vs Nakpro Impact vs Nakpro Gold)
+    q_series = extract_product_series(query_title)
+    c_series = extract_product_series(candidate_title)
+    if q_series:
+        # If candidate has a recognized product series, it MUST match the query's series
+        if c_series and not q_series.intersection(c_series):
+            return 0.15, False
+        # Candidate must contain the requested series name
+        if not any(re.search(rf"\b{re.escape(s)}\b", candidate_title.lower()) for s in q_series):
+            return 0.15, False
+
+    # 4. Combo / Bundle Guard (prevent matching unwanted bundles with Creatine, Shaker, etc.)
+    q_is_combo = is_bundle_or_combo(query_title)
+    c_is_combo = is_bundle_or_combo(candidate_title)
+    if not q_is_combo and c_is_combo:
+        return 0.15, False
+
+    # 5. Flavour Guard (strict matching for Unflavoured vs Flavoured, or specific flavours)
+    q_unfav = has_unflavoured_spec(query_title)
+    c_unfav = has_unflavoured_spec(candidate_title)
+    q_sweet = extract_sweet_flavours(query_title)
+    c_sweet = extract_sweet_flavours(candidate_title)
+
+    if q_unfav:
+        # If query explicitly asked for unflavoured:
+        # Candidate MUST NOT have any sweet flavour (e.g. malai kulfi, chocolate)
+        if c_sweet:
+            return 0.15, False
+        # Candidate must explicitly specify unflavoured
+        if not c_unfav:
+            return 0.15, False
+    elif q_sweet:
+        # If query explicitly asked for a sweet flavour (e.g. chocolate):
+        # Candidate must not be unflavoured
+        if c_unfav and not c_sweet:
+            return 0.15, False
+        # If candidate has sweet flavours, at least one must match query's flavour
+        if c_sweet and not q_sweet.intersection(c_sweet):
+            return 0.15, False
+
+    # 6. Non-Brand Token Coverage Check
     clean_q_list = clean_q.split()
     brand_tokens = set(q_b.split()) if q_b else set()
     q_clean_tokens = [w for w in clean_q_list if w not in brand_tokens]
