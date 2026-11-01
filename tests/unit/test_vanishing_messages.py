@@ -134,7 +134,11 @@ def test_menu_commands_only_contain_working_commands():
     """Verify that all commands in DEFAULT_BOT_COMMANDS are valid and non-working commands are excluded."""
     commands = [c.command for c in DEFAULT_BOT_COMMANDS]
     # Usable working commands must be present
-    for expected in ["start", "help", "products", "tracked", "trackall", "repeat", "settings", "pincode", "setpincode", "favourites", "search", "untrack", "track", "count", "analytics", "history", "map", "status", "support"]:
+    for expected in [
+        "start", "help", "products", "tracked", "trackall", "repeat", "settings",
+        "pincode", "setpincode", "favourites", "search", "untrack", "track",
+        "compare", "instock", "channels", "count", "analytics", "history", "map", "status", "support",
+    ]:
         assert expected in commands, f"Command {expected} missing from bot menu"
 
     # Non-working or unconfigured commands must NOT be present in menu
