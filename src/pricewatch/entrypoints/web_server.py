@@ -25,6 +25,12 @@ from pricewatch.repositories.memory_repo import MemoryRepository
 from pricewatch.repositories.supabase_repo import SupabaseRepository
 from pricewatch.services.amul_poller import run_amul_poller
 from pricewatch.services.tracker_service import TrackerService
+from pricewatch.webapp.server import (
+    get_catalog_data,
+    serve_catalog,
+    serve_dashboard,
+    set_webapp_context,
+)
 
 logger = get_logger("web_server")
 
@@ -63,6 +69,46 @@ class TelegramWebhookHandler(tornado.web.RequestHandler):
             logger.error("Failed to process Telegram webhook update", error=str(exc))
             self.set_status(400)
             self.write("Bad Request")
+
+
+class CatalogApiHandler(tornado.web.RequestHandler):
+    """API endpoint returning catalog listings and purity status."""
+
+    async def get(self):
+        self.set_header("Content-Type", "application/json")
+        try:
+            data = await get_catalog_data()
+            self.write(data)
+        except Exception as exc:
+            self.set_status(500)
+            self.write({"error": str(exc)})
+
+
+class CatalogPageHandler(tornado.web.RequestHandler):
+    """Serves the interactive Telegram Mini App catalog page."""
+
+    async def get(self):
+        self.set_header("Content-Type", "text/html; charset=utf-8")
+        try:
+            resp = await serve_catalog()
+            self.write(resp.body)
+        except Exception as exc:
+            self.set_status(500)
+            self.write(f"<h3>Error loading catalog: {exc}</h3>")
+
+
+class DashboardPageHandler(tornado.web.RequestHandler):
+    """Serves the TradingView product price dashboard."""
+
+    async def get(self, listing_id_str):
+        self.set_header("Content-Type", "text/html; charset=utf-8")
+        try:
+            lid = int(listing_id_str)
+            resp = await serve_dashboard(lid)
+            self.write(resp.body)
+        except Exception as exc:
+            self.set_status(500)
+            self.write(f"<h3>Error loading dashboard: {exc}</h3>")
 
 
 async def run_server_async(port: int, webhook_url: str) -> None:
@@ -121,10 +167,17 @@ async def run_server_async(port: int, webhook_url: str) -> None:
     else:
         logger.warning("TELEGRAM_BOT_TOKEN is not set. Web server will serve healthz only until token is configured.")
 
+    # Initialize TMA WebApp repository context
+    set_webapp_context(repo)
+
     # Configure Tornado HTTP routes
     handlers = [
         (r"/healthz", HealthHandler),
+        (r"/health", HealthHandler),
         (r"/", HealthHandler),
+        (r"/api/v1/catalog", CatalogApiHandler),
+        (r"/webapp/catalog", CatalogPageHandler),
+        (r"/webapp/dashboard/([0-9]+)", DashboardPageHandler),
     ]
     if ptb_app:
         handlers.append((r"/webhook", TelegramWebhookHandler, dict(ptb_app=ptb_app)))
