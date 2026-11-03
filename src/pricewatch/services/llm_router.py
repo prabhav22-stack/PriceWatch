@@ -27,7 +27,8 @@ class HybridLLMRouter:
 
     @property
     def has_groq(self) -> bool:
-        return bool(self.groq_api_key and len(self.groq_api_key) > 10)
+        key = self.groq_api_key or settings.GROQ_API_KEY
+        return bool(key and len(key) > 10)
 
     @property
     def has_gemini(self) -> bool:

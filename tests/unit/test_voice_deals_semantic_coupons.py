@@ -22,16 +22,15 @@ from pricewatch.domain.models import CanonicalListing, PriceObservation
 async def test_groq_whisper_transcription_success():
     """Verify Groq Whisper endpoint returns transcribed text from audio bytes."""
     fake_audio = b"\x00\x01\x02\x03\x04"
-    with patch("pricewatch.services.llm_router.settings") as mock_settings:
-        mock_settings.GROQ_API_KEY = "gsk_testkey1234567890"
-        with patch.object(
-            llm_router,
-            "_transcribe_via_groq",
-            new_callable=AsyncMock,
-            return_value="top 5 isolate whey under 2000",
-        ):
-            transcription = await llm_router.transcribe_audio(fake_audio)
-            assert transcription == "top 5 isolate whey under 2000"
+    with patch.object(llm_router, "groq_api_key", "gsk_testkey1234567890"), \
+         patch.object(
+             llm_router,
+             "_transcribe_via_groq",
+             new_callable=AsyncMock,
+             return_value="top 5 isolate whey under 2000",
+         ):
+        transcription = await llm_router.transcribe_audio(fake_audio)
+        assert transcription == "top 5 isolate whey under 2000"
 
 
 @pytest.mark.asyncio
