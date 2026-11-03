@@ -2,7 +2,7 @@
 
 import html
 import re
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update, WebAppInfo
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
@@ -48,6 +48,7 @@ from pricewatch.logging_setup import get_logger
 
 logger = get_logger("commands")
 from pricewatch.providers.amul import AmulProvider
+from pricewatch.services.deal_hunter import deal_hunter
 from pricewatch.providers.base import ProviderRegistry
 from pricewatch.services.amul_auto_order import AmulAutoOrderService
 from pricewatch.services.amul_stock_tracker import AmulStockTracker
@@ -542,6 +543,60 @@ async def export_command_handler(update: Update, context: ContextTypes.DEFAULT_T
         filename=f"PriceWatch_Tracked_Items_{user_id}.csv",
         caption=caption,
         parse_mode="HTML",
+    )
+
+
+async def deals_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /deals and /alltimelow to surface price drops and glitches via DuckDB."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: Optional[TrackerService] = context.bot_data.get("tracker_service")
+    listings = []
+    observations = []
+    if tracker_service and hasattr(tracker_service, "repo"):
+        repo = tracker_service.repo
+        if hasattr(repo, "listings"):
+            listings = list(repo.listings.values())
+        if hasattr(repo, "get_all_observations"):
+            observations = await repo.get_all_observations()
+
+    deals = deal_hunter.analyze_deals(listings=listings, observations=observations, limit=5)
+    report_text = deal_hunter.format_deals_report(deals)
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🛍️ Browse Full Catalog", callback_data="catalog:open"),
+            InlineKeyboardButton("🔄 Refresh Deals", callback_data="deals:refresh"),
+        ],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home")],
+    ])
+
+    await update.effective_message.reply_html(
+        text=report_text,
+        reply_markup=keyboard,
+        disable_web_page_preview=True,
+    )
+
+
+async def catalog_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /catalog and /explore to open the interactive Telegram Mini App."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    webapp_base = settings.WEBAPP_URL.rstrip("/") if settings.WEBAPP_URL else "https://whey-price-tracker.onrender.com"
+    catalog_url = f"{webapp_base}/webapp/catalog"
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛍️ Open Interactive Catalog & Filters", web_app=WebAppInfo(url=catalog_url))],
+        [InlineKeyboardButton("🌐 Open in Web Browser", url=catalog_url)],
+    ])
+
+    await update.effective_message.reply_html(
+        "📱 <b>PriceWatch Interactive Catalog & Deal Drawer</b>\n\n"
+        "Explore verified supplements with live price range sliders, "
+        "dietary filters (Isolate, Raw, Trustified Passed), and store price tags.",
+        reply_markup=keyboard,
     )
 
 

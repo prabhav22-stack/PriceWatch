@@ -86,6 +86,19 @@ class DealCardGenerator:
         ax.text(0.07, 0.52, f"Store: {best_deal.store_name}  •  [IN STOCK]", fontsize=12,
                 color="#E2E8F0", fontweight="bold", va="center", family="sans-serif")
 
+        # Active Coupon Pill if available
+        try:
+            from pricewatch.services.coupon_service import coupon_service
+            c_info = coupon_service.extract_coupon(
+                f"{best_deal.title or ''} {best_deal.store_name or ''}",
+                best_deal.price_paise / 100.0,
+            )
+            if c_info.has_coupon:
+                ax.text(0.07, 0.47, f"[COUPON: -Rs {c_info.discount_amount:,.0f} | Effective: Rs {c_info.effective_price:,.0f}]",
+                        fontsize=10, color="#F59E0B", fontweight="bold", va="center", family="sans-serif")
+        except Exception:
+            pass
+
         # Buy Now vs Wait verdict
         if buy_advice:
             ax.text(0.07, 0.43, "PREDICTIVE BUY ADVICE", fontsize=10, fontweight="bold",

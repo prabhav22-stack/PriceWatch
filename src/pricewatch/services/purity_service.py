@@ -238,6 +238,22 @@ class PurityVerificationService:
 
         return best_cert
 
+    def get_purity_badge(self, product_title: str) -> Optional[Dict[str, str]]:
+        """Returns structured dictionary summary of third-party lab test."""
+        cert = self.lookup(product_title)
+        if not cert:
+            return None
+        summary = (
+            f"{cert.lab_tester} Passed ({cert.tested_protein_g:g}g protein)"
+            if (cert.tested_protein_g and cert.scoop_size_g)
+            else f"{cert.lab_tester} Passed"
+        )
+        return {
+            "lab_tester": cert.lab_tester,
+            "status": cert.status,
+            "summary": summary,
+        }
+
     def format_badge_markdown(self, cert: Optional[PurityCertificate]) -> str:
         """Formats concise markdown for chat reports."""
         if not cert:

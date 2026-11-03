@@ -14,6 +14,8 @@ DEFAULT_BOT_COMMANDS: List[BotCommand] = [
     BotCommand("start", "Home dashboard & main menu"),
     BotCommand("track", "Track a product link & target price"),
     BotCommand("compare", "Find best price across stores"),
+    BotCommand("deals", "DuckDB price drops & all-time lows"),
+    BotCommand("catalog", "Interactive Mini App & filters"),
     BotCommand("instock", "Check live stock across all stores"),
     BotCommand("tracked", "List all your tracked products"),
     BotCommand("check", "Instant live price & stock check"),

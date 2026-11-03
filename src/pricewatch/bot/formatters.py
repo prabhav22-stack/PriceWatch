@@ -262,6 +262,17 @@ def format_comparison_report(result: ComparisonResult) -> str:
         except Exception:
             pass
 
+        # Automated On-Page Coupon Callout
+        try:
+            from pricewatch.services.coupon_service import coupon_service
+            snippet = f"{bd.title or ''} {bd.store_name or ''}"
+            c_info = coupon_service.extract_coupon(snippet, (bd.price_paise or 0) / 100.0)
+            if c_info.has_coupon:
+                lines.append(f"🏷️ <b>On-Page Coupon:</b> {c_info.description}")
+                lines.append(f"💰 <b>Effective Price:</b> ₹{c_info.effective_price:,.0f}")
+        except Exception:
+            pass
+
         lines.append("")
     elif not any(d.available for d in result.deals):
         lines.append("⚠️ <b>Stock Alert:</b> <i>This product appears to be Out of Stock across all checked stores right now.</i>\n")

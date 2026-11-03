@@ -45,6 +45,8 @@ from pricewatch.bot.handlers.commands import (
     channels_command_handler,
     check_command_handler,
     compare_command_handler,
+    deals_command_handler,
+    catalog_command_handler,
     export_command_handler,
     favourites_command_handler,
     help_handler,
@@ -67,6 +69,7 @@ from pricewatch.bot.handlers.commands import (
     trackall_command_handler,
     untrack_handler,
 )
+from pricewatch.bot.handlers.voice import voice_message_handler
 from pricewatch.config import settings
 from pricewatch.services.discovery_service import DiscoveryService
 from pricewatch.services.tracker_service import TrackerService
@@ -124,6 +127,10 @@ def create_telegram_app(
     app.add_handler(CommandHandler("map", map_handler))
     app.add_handler(CommandHandler("history", history_command_handler))
     app.add_handler(CommandHandler("export", export_command_handler))
+    app.add_handler(CommandHandler("deals", deals_command_handler))
+    app.add_handler(CommandHandler("alltimelow", deals_command_handler))
+    app.add_handler(CommandHandler("catalog", catalog_command_handler))
+    app.add_handler(CommandHandler("explore", catalog_command_handler))
 
     # Catch /untrack_123, /history_123, and /instock_123 shorthand commands
     app.add_handler(MessageHandler(filters.Regex(r"^/untrack_\d+"), untrack_handler))
@@ -132,6 +139,9 @@ def create_telegram_app(
 
     # Catch screenshots & product photos for AI Vision tracking
     app.add_handler(MessageHandler(filters.PHOTO, photo_message_handler))
+
+    # Catch voice notes and audio for Groq Whisper voice assistant
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_message_handler))
 
     # Catch plain text: conversational URL pasting & custom target price replies
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_text_handler))

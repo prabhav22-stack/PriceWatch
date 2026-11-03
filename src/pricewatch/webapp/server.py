@@ -18,6 +18,7 @@ from pricewatch.config import settings
 from pricewatch.domain.models import CanonicalListing, PriceObservation
 from pricewatch.logging_setup import get_logger
 from pricewatch.services.deal_scorer import DealScorer
+from pricewatch.services.purity_service import purity_service
 
 logger = get_logger("webapp.server")
 
@@ -369,3 +370,213 @@ async def serve_dashboard(listing_id: int):
 </body>
 </html>"""
     return HTMLResponse(content=html)
+
+
+@app.get("/api/v1/catalog")
+async def get_catalog_data():
+    """Return all catalog items with prices, store badges, and purity status."""
+    METRIC_REQUESTS.labels(method="GET", endpoint="/api/v1/catalog").inc()
+    items = []
+    if _repo and hasattr(_repo, "listings"):
+        for lid, listing in _repo.listings.items():
+            if not listing.last_price_paise:
+                continue
+            badge = purity_service.get_purity_badge(listing.product_title)
+            items.append({
+                "id": lid,
+                "title": listing.product_title,
+                "variant": listing.variant_title,
+                "store": listing.provider_code.title(),
+                "price": listing.last_price_paise / 100.0,
+                "mrp": (listing.last_mrp_paise / 100.0) if listing.last_mrp_paise else None,
+                "available": listing.last_available,
+                "url": listing.canonical_url or "#",
+                "is_isolate": "isolate" in (listing.product_title or "").lower(),
+                "is_concentrate": "concentrate" in (listing.product_title or "").lower() or "raw" in (listing.product_title or "").lower(),
+                "is_unflavoured": "unflavour" in (f"{listing.product_title} {listing.variant_title or ''}").lower(),
+                "purity_passed": badge is not None,
+                "purity_badge": badge.get("summary") if badge else None,
+            })
+
+    # Fallback to market catalog seeds if repo is empty
+    if not items:
+        seeds = [
+            {"id": 1, "title": "Nakpro Platinum 100% Whey Isolate", "variant": "1kg, Unflavoured", "store": "Amazon", "price": 2199.0, "mrp": 3699.0, "available": True, "url": "https://www.amazon.in/dp/B082F3M6GZ", "is_isolate": True, "is_concentrate": False, "is_unflavoured": True, "purity_passed": True, "purity_badge": "Passed (27.2g Protein / 30g)"},
+            {"id": 2, "title": "MuscleBlaze Biozyme Performance Whey", "variant": "1kg, Rich Chocolate", "store": "Flipkart", "price": 2099.0, "mrp": 2799.0, "available": True, "url": "https://www.flipkart.com", "is_isolate": False, "is_concentrate": True, "is_unflavoured": False, "purity_passed": True, "purity_badge": "Passed (25g Protein)"},
+            {"id": 3, "title": "AS-IT-IS Nutrition Whey Concentrate 80%", "variant": "1kg, Raw Unflavoured", "store": "Amazon", "price": 1649.0, "mrp": 2199.0, "available": True, "url": "https://www.amazon.in/dp/B073VCHQHQ", "is_isolate": False, "is_concentrate": True, "is_unflavoured": True, "purity_passed": True, "purity_badge": "Passed (24g Protein / 30g)"},
+            {"id": 4, "title": "Amul Raw Whey Protein Concentrate 80%", "variant": "1kg, 32 Sachets", "store": "Amul", "price": 1900.0, "mrp": 2200.0, "available": True, "url": "https://shop.amul.com/en/browse/protein", "is_isolate": False, "is_concentrate": True, "is_unflavoured": True, "purity_passed": True, "purity_badge": "Passed (Dairy Origin)"},
+            {"id": 5, "title": "Optimum Nutrition (ON) Gold Standard Whey", "variant": "2 lbs, Double Rich Chocolate", "store": "Nutrabay", "price": 3199.0, "mrp": 4099.0, "available": True, "url": "https://nutrabay.com", "is_isolate": True, "is_concentrate": True, "is_unflavoured": False, "purity_passed": True, "purity_badge": "Passed (Informed Choice)"},
+            {"id": 6, "title": "Nakpro Gold Whey Concentrate 80%", "variant": "1kg, Malai Kulfi", "store": "Nakpro", "price": 1699.0, "mrp": 2499.0, "available": True, "url": "https://nakpro.com", "is_isolate": False, "is_concentrate": True, "is_unflavoured": False, "purity_passed": True, "purity_badge": "Passed (24.1g Protein)"},
+        ]
+        items = seeds
+
+    return {"count": len(items), "items": items}
+
+
+@app.get("/webapp/catalog", response_class=HTMLResponse)
+async def serve_catalog():
+    """Render interactive Telegram Mini App Catalog and Filter Drawer."""
+    METRIC_REQUESTS.labels(method="GET", endpoint="/webapp/catalog").inc()
+    catalog_res = await get_catalog_data()
+    items_json = json.dumps(catalog_res["items"])
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>PriceWatch Supplement Catalog</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {{
+      --bg: var(--tg-theme-bg-color, #0b1120);
+      --card-bg: var(--tg-theme-secondary-bg-color, #1e293b);
+      --text: var(--tg-theme-text-color, #f8fafc);
+      --hint: var(--tg-theme-hint-color, #94a3b8);
+      --accent: var(--tg-theme-button-color, #38bdf8);
+      --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+    body {{ background: var(--bg); color: var(--text); padding: 14px; min-height: 100vh; }}
+    
+    .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }}
+    .app-title {{ font-size: 19px; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 6px; }}
+    .badge-count {{ background: rgba(56, 189, 248, 0.2); color: #38bdf8; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }}
+
+    /* Search & Filter Controls */
+    .search-box {{ width: 100%; padding: 11px 14px; background: var(--card-bg); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; color: var(--text); font-size: 14px; margin-bottom: 12px; outline: none; }}
+    .search-box:focus {{ border-color: var(--accent); }}
+
+    .slider-container {{ background: var(--card-bg); padding: 12px 14px; border-radius: 12px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.06); }}
+    .slider-header {{ display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; margin-bottom: 6px; }}
+    .slider-val {{ color: #38bdf8; }}
+    input[type=range] {{ width: 100%; accent-color: var(--accent); }}
+
+    .chips-row {{ display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 14px; scrollbar-width: none; }}
+    .chips-row::-webkit-scrollbar {{ display: none; }}
+    .chip {{ padding: 7px 12px; background: var(--card-bg); border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; border: 1px solid rgba(255,255,255,0.08); color: var(--hint); transition: all 0.15s ease; }}
+    .chip.active {{ background: var(--accent); color: var(--accent-text); border-color: var(--accent); }}
+
+    /* Cards Grid */
+    .grid {{ display: flex; flex-direction: column; gap: 12px; }}
+    .card {{ background: var(--card-bg); border-radius: 14px; padding: 14px; border: 1px solid rgba(255,255,255,0.06); }}
+    .card-head {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }}
+    .store-badge {{ font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; text-transform: uppercase; }}
+    .purity-tag {{ font-size: 11px; font-weight: 700; color: #10b981; }}
+    .prod-title {{ font-size: 15px; font-weight: 700; line-height: 1.3; margin-bottom: 4px; }}
+    .prod-var {{ font-size: 12px; color: var(--hint); margin-bottom: 10px; }}
+    .price-row {{ display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }}
+    .price {{ font-size: 22px; font-weight: 800; color: #38bdf8; }}
+    .mrp {{ font-size: 13px; color: var(--hint); text-decoration: line-through; margin-left: 6px; }}
+    .buy-btn {{ display: block; width: 100%; padding: 10px; background: var(--accent); color: var(--accent-text); text-align: center; font-size: 13px; font-weight: 700; border-radius: 10px; text-decoration: none; }}
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <div class="app-title">⚡ PriceWatch Catalog</div>
+    <span class="badge-count" id="countBadge">0 Items</span>
+  </div>
+
+  <input type="text" id="searchInput" class="search-box" placeholder="🔍 Search brand, whey, isolate, flavor..." oninput="applyFilters()">
+
+  <div class="slider-container">
+    <div class="slider-header">
+      <span>Max Budget</span>
+      <span class="slider-val" id="budgetValue">₹5,000</span>
+    </div>
+    <input type="range" id="priceRange" min="1000" max="6000" step="100" value="5000" oninput="onSliderChange(this.value)">
+  </div>
+
+  <div class="chips-row">
+    <button class="chip active" onclick="toggleChip(this, 'all')">🌟 All</button>
+    <button class="chip" onclick="toggleChip(this, 'isolate')">⚡ 100% Isolate</button>
+    <button class="chip" onclick="toggleChip(this, 'concentrate')">🥛 Concentrate</button>
+    <button class="chip" onclick="toggleChip(this, 'purity')">🛡️ Lab Verified</button>
+    <button class="chip" onclick="toggleChip(this, 'unflavoured')">🌿 Unflavoured</button>
+  </div>
+
+  <div class="grid" id="productsGrid"></div>
+
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg) {{ tg.ready(); tg.expand(); }}
+
+    const allItems = {items_json};
+    let activeFilter = 'all';
+    let maxPrice = 5000;
+
+    function onSliderChange(val) {{
+      maxPrice = parseInt(val);
+      document.getElementById('budgetValue').innerText = '₹' + maxPrice.toLocaleString('en-IN');
+      applyFilters();
+    }}
+
+    function toggleChip(el, filterType) {{
+      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      activeFilter = filterType;
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+      applyFilters();
+    }}
+
+    function applyFilters() {{
+      const query = document.getElementById('searchInput').value.toLowerCase().trim();
+      const filtered = allItems.filter(item => {{
+        if (item.price > maxPrice) return false;
+        if (activeFilter === 'isolate' && !item.is_isolate) return false;
+        if (activeFilter === 'concentrate' && !item.is_concentrate) return false;
+        if (activeFilter === 'purity' && !item.purity_passed) return false;
+        if (activeFilter === 'unflavoured' && !item.is_unflavoured) return false;
+        if (query) {{
+          const fullText = (item.title + ' ' + (item.variant || '') + ' ' + item.store).toLowerCase();
+          if (!fullText.includes(query)) return false;
+        }}
+        return true;
+      }});
+
+      renderGrid(filtered);
+    }}
+
+    function renderGrid(items) {{
+      const container = document.getElementById('productsGrid');
+      document.getElementById('countBadge').innerText = items.length + ' Items';
+
+      if (items.length === 0) {{
+        container.innerHTML = '<div style="text-align:center; padding: 40px 10px; color: var(--hint); font-size: 14px;">No products match your current budget & filters. Try adjusting the slider.</div>';
+        return;
+      }}
+
+      container.innerHTML = items.map(item => {{
+        const purityTag = item.purity_passed ? '<span class="purity-tag">🛡️ Lab Passed</span>' : '';
+        const mrpTag = item.mrp ? '<span class="mrp">₹' + Math.round(item.mrp).toLocaleString('en-IN') + '</span>' : '';
+        return `
+          <div class="card">
+            <div class="card-head">
+              <span class="store-badge">${{item.store}}</span>
+              ${{purityTag}}
+            </div>
+            <div class="prod-title">${{item.title}}</div>
+            <div class="prod-var">${{item.variant || ''}}</div>
+            <div class="price-row">
+              <div>
+                <span class="price">₹${{Math.round(item.price).toLocaleString('en-IN')}}</span>
+                ${{mrpTag}}
+              </div>
+            </div>
+            <a href="${{item.url}}" target="_blank" class="buy-btn" onclick="onBuyClick()">🛒 View in Store</a>
+          </div>
+        `;
+      }}).join('');
+    }}
+
+    function onBuyClick() {{
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+    }}
+
+    // Initial render
+    applyFilters();
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+

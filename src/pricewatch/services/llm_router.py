@@ -95,5 +95,61 @@ class HybridLLMRouter:
                 logger.debug("Groq non-200 response", status=resp.status_code)
                 return None
 
+    async def transcribe_audio(
+        self,
+        audio_bytes: bytes,
+        filename: str = "voice.ogg",
+        prompt: Optional[str] = None,
+    ) -> Optional[str]:
+        """Transcribe audio bytes using Groq Whisper (whisper-large-v3-turbo)."""
+        if not audio_bytes:
+            return None
+
+        if self.has_groq:
+            try:
+                text = await self._transcribe_via_groq(audio_bytes, filename, prompt)
+                if text and text.strip():
+                    logger.info("Transcribed audio via Groq Whisper", length=len(text), preview=text[:60])
+                    return text.strip()
+            except Exception as exc:
+                logger.warning("Groq Whisper transcription failed", error=str(exc))
+
+        return None
+
+    async def _transcribe_via_groq(
+        self,
+        audio_bytes: bytes,
+        filename: str = "voice.ogg",
+        prompt: Optional[str] = None,
+    ) -> Optional[str]:
+        """Call Groq Whisper audio transcriptions endpoint."""
+        url = "https://api.groq.com/openai/v1/audio/transcriptions"
+        headers = {
+            "Authorization": f"Bearer {self.groq_api_key}",
+        }
+        domain_prompt = prompt or (
+            "Whey protein, isolate, concentrate, creatine monohydrate, shilajit, "
+            "Nakpro, MuscleBlaze, Amul, Asitis, Nutrabay, Optimum Nutrition, "
+            "unflavoured, price comparison, budget."
+        )
+
+        files = {
+            "file": (filename, audio_bytes, "audio/ogg"),
+        }
+        data = {
+            "model": "whisper-large-v3-turbo",
+            "prompt": domain_prompt,
+            "response_format": "json",
+        }
+
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.post(url, headers=headers, files=files, data=data)
+            if resp.status_code == 200:
+                result = resp.json()
+                return result.get("text", "")
+            else:
+                logger.warning("Groq Whisper non-200 response", status=resp.status_code, body=resp.text)
+                return None
+
 
 llm_router = HybridLLMRouter()

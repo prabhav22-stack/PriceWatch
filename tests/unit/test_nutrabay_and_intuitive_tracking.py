@@ -251,7 +251,16 @@ async def test_callback_nav_home_and_back_buttons():
     context = MagicMock()
     context.bot_data = {"tracker_service": tracker_service}
 
-    await callback_query_dispatcher(update, context)
+    mock_quote = PriceQuote(
+        external_product_id="9303750",
+        external_variant_id="4609770",
+        price_paise=49900,
+        available=False,
+        extraction_method="nutrabay:rest_api",
+        warehouse_stock={"NWH": 0, "ER1": 0},
+    )
+    with patch.object(NutrabayProvider, "fetch_quote", new_callable=AsyncMock, return_value=mock_quote):
+        await callback_query_dispatcher(update, context)
 
     query.edit_message_text.assert_called_once()
     welcome_text = query.edit_message_text.call_args[0][0]
@@ -325,7 +334,16 @@ async def test_nutrabay_stock_report_callback():
     context = MagicMock()
     context.bot_data = {"tracker_service": tracker_service}
 
-    await callback_query_dispatcher(update, context)
+    mock_quote = PriceQuote(
+        external_product_id="9303750",
+        external_variant_id="4609770",
+        price_paise=49900,
+        available=False,
+        extraction_method="nutrabay:rest_api",
+        warehouse_stock={"NWH": 0, "ER1": 0},
+    )
+    with patch.object(NutrabayProvider, "fetch_quote", new_callable=AsyncMock, return_value=mock_quote):
+        await callback_query_dispatcher(update, context)
 
     query.edit_message_text.assert_called_once()
     msg_text = query.edit_message_text.call_args[0][0]

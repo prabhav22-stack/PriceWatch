@@ -264,6 +264,10 @@ def build_welcome_keyboard() -> InlineKeyboardMarkup:
     """Home dashboard quick navigation buttons for /start."""
     return InlineKeyboardMarkup([
         [
+            InlineKeyboardButton("🔥 Top Deals & Glitches", callback_data="deals:open"),
+            InlineKeyboardButton("🛍️ Catalog (TMA)", callback_data="catalog:open"),
+        ],
+        [
             InlineKeyboardButton("🥛 Browse Amul Products", callback_data="amul_menu"),
             InlineKeyboardButton("⭐ Favourites", callback_data="nav:favs"),
         ],

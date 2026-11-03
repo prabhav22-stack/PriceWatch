@@ -3,7 +3,7 @@
 import html
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-from telegram import LinkPreviewOptions, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update, WebAppInfo
 from telegram.ext import ContextTypes
 
 from pricewatch.bot.formatters import (
@@ -350,6 +350,49 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
             except Exception as card_exc:
                 logger.warning("Error generating deal card", error=str(card_exc))
                 await query.answer("Failed to generate deal card.", show_alert=True)
+            return
+
+        # 3cd. DuckDB Deals & Glitches: deals:open or deals:refresh
+        if data in ("deals:open", "deals:refresh"):
+            try:
+                await query.answer("⚡ Running DuckDB OLAP deal analysis...")
+            except Exception:
+                pass
+            from pricewatch.services.deal_hunter import deal_hunter
+            listings = list(tracker_service.repo.listings.values()) if hasattr(tracker_service, "repo") and hasattr(tracker_service.repo, "listings") else []
+            observations = await tracker_service.repo.get_all_observations() if hasattr(tracker_service, "repo") and hasattr(tracker_service.repo, "get_all_observations") else []
+            deals = deal_hunter.analyze_deals(listings=listings, observations=observations, limit=5)
+            report_text = deal_hunter.format_deals_report(deals)
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🛍️ Browse Full Catalog", callback_data="catalog:open"),
+                    InlineKeyboardButton("🔄 Refresh Deals", callback_data="deals:refresh"),
+                ],
+                [InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home")],
+            ])
+            await query.message.reply_html(text=report_text, reply_markup=kb, disable_web_page_preview=True)
+            return
+
+        # 3ce. Interactive Catalog (TMA): catalog:open
+        if data == "catalog:open":
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            from pricewatch.config import settings
+            webapp_base = settings.WEBAPP_URL.rstrip("/") if settings.WEBAPP_URL else "https://whey-price-tracker.onrender.com"
+            catalog_url = f"{webapp_base}/webapp/catalog"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛍️ Open Interactive Catalog & Filters", web_app=WebAppInfo(url=catalog_url))],
+                [InlineKeyboardButton("🌐 Open in Web Browser", url=catalog_url)],
+                [InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home")],
+            ])
+            await query.message.reply_html(
+                "📱 <b>PriceWatch Interactive Catalog & Deal Drawer</b>\n\n"
+                "Explore verified supplements with live price range sliders, "
+                "dietary filters (Isolate, Raw, Trustified Passed), and store price tags.",
+                reply_markup=kb,
+            )
             return
 
         # 3d. Instant Live In-Stock Finder: stk:<listing_id>

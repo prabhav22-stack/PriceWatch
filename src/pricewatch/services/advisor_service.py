@@ -254,6 +254,15 @@ class ConversationalAdvisorService:
             "<i>Ranked by verified seller trust, lab testing & buyer value:</i>\n",
         ]
 
+        # Clinical / Dietary advice from semantic search
+        try:
+            from pricewatch.services.semantic_search import semantic_search
+            intent_advice = semantic_search.get_intent_advice(original_query)
+            if intent_advice:
+                lines.append(f"🌿 <b>Dietary Note:</b> <i>{intent_advice}</i>\n")
+        except Exception:
+            pass
+
         # For the top recommended deal, evaluate Buy/Wait advice
         if top_deals:
             try:
@@ -279,21 +288,37 @@ class ConversationalAdvisorService:
             # Check for purity certification and trust badge
             from pricewatch.services.purity_service import purity_service
             cert = purity_service.lookup(deal.product_title)
-            if cert and cert.claimed_protein_g and cert.tested_protein_g:
+            if is_trusted_brand(deal.product_title):
+                trust_badge = "🛡️ <b>Lab-Verified Brand</b>"
+                if cert and cert.claimed_protein_g and cert.tested_protein_g:
+                    trust_badge += f" ({cert.lab_tester}: {cert.tested_protein_g:g}g/{cert.scoop_size_g:g}g protein)"
+                elif cert:
+                    trust_badge += f" ({cert.lab_tester}: {cert.status})"
+            elif cert and cert.claimed_protein_g and cert.tested_protein_g:
                 trust_badge = f"🛡️ <b>{cert.lab_tester} Verified:</b> {cert.tested_protein_g:g}g/{cert.scoop_size_g:g}g protein"
             elif cert:
                 trust_badge = f"🛡️ <b>{cert.lab_tester} Tested:</b> {cert.status} (Heavy metals safe)"
-            elif is_trusted_brand(deal.product_title):
-                trust_badge = "🛡️ <b>Lab-Verified Brand</b>"
             else:
                 trust_badge = "⭐ Verified Seller"
-            trust_badge = "🛡️ <b>Lab-Verified Brand</b>" if is_trusted_brand(deal.product_title) else "⭐ Verified Seller"
 
             lines.append(f"{medal} <b>{deal.product_title}</b>")
             lines.append(f"   💰 <code>{price_str}</code>{mrp_str} on <b>{deal.store_name}</b> (🟢 In Stock)")
             lines.append(f"   {trust_badge}")
+
+            # Check for active store coupons
+            try:
+                from pricewatch.services.coupon_service import coupon_service
+                coupon_info = coupon_service.extract_coupon(
+                    f"{deal.product_title} {deal.variant_title or ''}",
+                    deal.price_paise / 100.0,
+                )
+                if coupon_info.has_coupon:
+                    lines.append(f"   🏷️ <i>{coupon_info.description} • Effective: ₹{coupon_info.effective_price:,.0f}</i>")
+            except Exception:
+                pass
+
             if deal.variant_title:
-                lines.append(f"   🏷️ <i>{deal.variant_title}</i>")
+                lines.append(f"   📦 <i>{deal.variant_title}</i>")
             lines.append("")
 
             # Action button
