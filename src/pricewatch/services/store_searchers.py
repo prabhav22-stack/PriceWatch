@@ -35,7 +35,7 @@ async def search_hyugalife(query: str, target_weight_g: Optional[int] = None) ->
     url = f"https://hyugalife.com/search?q={enc_q}"
 
     try:
-        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=6.0)
+        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=3.5)
         if resp.status_code != 200:
             return deals
 
@@ -109,7 +109,7 @@ async def search_healthkart(query: str, target_weight_g: Optional[int] = None) -
 
     html_text = ""
     try:
-        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=6.0)
+        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=3.5)
         if resp.status_code == 200:
             html_text = resp.text
     except Exception:
@@ -117,7 +117,7 @@ async def search_healthkart(query: str, target_weight_g: Optional[int] = None) -
 
     if not html_text:
         from pricewatch.services.crawlee_scraper import crawlee_fetcher
-        html_text = await crawlee_fetcher.fetch_html(url, headers=_DEFAULT_HEADERS, timeout_secs=8.0) or ""
+        html_text = await crawlee_fetcher.fetch_html(url, headers=_DEFAULT_HEADERS, timeout_secs=4.0) or ""
 
     if not html_text:
         return deals
@@ -200,6 +200,32 @@ async def search_shopify_store(
 
         data = resp.json()
         products = data.get("resources", {}).get("results", {}).get("products", [])
+        if not products:
+            return deals
+
+        # Variant inspection: fetch product JSONs concurrently in parallel instead of sequential loop
+        handles = [p.get("handle") for p in products[:4] if p.get("handle")]
+        async def fetch_product_variants(h: str):
+            try:
+                p_res = await http_client.get(
+                    f"https://{domain}/products/{h}.js",
+                    headers=_DEFAULT_HEADERS,
+                    timeout=2.0,
+                )
+                if p_res.status_code == 200:
+                    return h, p_res.json().get("variants", [])
+            except Exception:
+                pass
+            return h, []
+
+        variant_results = await asyncio.gather(
+            *[fetch_product_variants(h) for h in handles],
+            return_exceptions=True,
+        )
+        handle_to_variants = {}
+        for vr in variant_results:
+            if isinstance(vr, tuple):
+                handle_to_variants[vr[0]] = vr[1]
 
         for p in products[:5]:
             title = p.get("title") or ""
@@ -207,20 +233,7 @@ async def search_shopify_store(
             if not title:
                 continue
 
-            # Variant inspection: fetch product JSON to evaluate exact size & flavour variants
-            variants = []
-            if handle:
-                try:
-                    p_res = await http_client.get(
-                        f"https://{domain}/products/{handle}.js",
-                        headers=_DEFAULT_HEADERS,
-                        timeout=4.0,
-                    )
-                    if p_res.status_code == 200:
-                        variants = p_res.json().get("variants", [])
-                except Exception:
-                    pass
-
+            variants = handle_to_variants.get(handle, [])
             if variants:
                 for v in variants:
                     v_title = v.get("title", "")
@@ -299,7 +312,7 @@ def _search_amazon_sync(query: str, target_weight_g: Optional[int] = None) -> Li
     url = f"https://www.amazon.in/s?k={enc_q}"
     try:
         from curl_cffi import requests
-        r = requests.get(url, impersonate="chrome124", timeout=8)
+        r = requests.get(url, impersonate="chrome124", timeout=4.5)
         if r.status_code != 200:
             return deals
 
@@ -379,7 +392,7 @@ def _search_flipkart_sync(query: str, target_weight_g: Optional[int] = None) -> 
     url = f"https://www.flipkart.com/search?q={enc_q}"
     try:
         from curl_cffi import requests
-        r = requests.get(url, impersonate="chrome124", timeout=8)
+        r = requests.get(url, impersonate="chrome124", timeout=4.5)
         if r.status_code != 200:
             return deals
 
@@ -454,7 +467,7 @@ async def search_muscleblaze(query: str, target_weight_g: Optional[int] = None) 
     url = f"https://www.muscleblaze.com/search?txtQ={enc_q}"
 
     try:
-        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=6.0)
+        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=3.5)
         if resp.status_code != 200:
             return deals
 
@@ -524,7 +537,7 @@ async def search_nutrabay(query: str, target_weight_g: Optional[int] = None) -> 
 
     html_text = ""
     try:
-        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=6.0)
+        resp = await http_client.get(url, headers=_DEFAULT_HEADERS, timeout=3.5)
         if resp.status_code == 200:
             html_text = resp.text
     except Exception:
@@ -532,7 +545,7 @@ async def search_nutrabay(query: str, target_weight_g: Optional[int] = None) -> 
 
     if not html_text:
         from pricewatch.services.crawlee_scraper import crawlee_fetcher
-        html_text = await crawlee_fetcher.fetch_html(url, headers=_DEFAULT_HEADERS, timeout_secs=8.0) or ""
+        html_text = await crawlee_fetcher.fetch_html(url, headers=_DEFAULT_HEADERS, timeout_secs=4.0) or ""
 
     if not html_text:
         return deals
@@ -602,30 +615,34 @@ async def search_nutrabay(query: str, target_weight_g: Optional[int] = None) -> 
     return deals
 
 
-@cache(ttl="3m", key="all_stores:{query}:{target_weight_g}", lock=True)
+@cache(ttl="15m", key="all_stores:{query}:{target_weight_g}", lock=True)
 async def query_all_stores(
     query: str,
     target_weight_g: Optional[int] = None,
 ) -> List[StoreDeal]:
-    """Query all trusted stores concurrently and return combined candidate deals."""
-    tasks = [
-        search_flipkart(query, target_weight_g=target_weight_g),
-        search_amazon(query, target_weight_g=target_weight_g),
-        search_hyugalife(query, target_weight_g=target_weight_g),
-        search_healthkart(query, target_weight_g=target_weight_g),
-        search_nutrabay(query, target_weight_g=target_weight_g),
-        search_muscleblaze(query, target_weight_g=target_weight_g),
-        search_shopify_store("nakpro.com", "Nakpro Direct", query, target_weight_g=target_weight_g),
-        search_shopify_store("asitisnutrition.com", "AS-IT-IS Direct", query, target_weight_g=target_weight_g),
+    """Query all trusted stores concurrently with 3.5s deadline to eliminate lag."""
+    task_list = [
+        asyncio.create_task(search_flipkart(query, target_weight_g=target_weight_g)),
+        asyncio.create_task(search_amazon(query, target_weight_g=target_weight_g)),
+        asyncio.create_task(search_hyugalife(query, target_weight_g=target_weight_g)),
+        asyncio.create_task(search_healthkart(query, target_weight_g=target_weight_g)),
+        asyncio.create_task(search_nutrabay(query, target_weight_g=target_weight_g)),
+        asyncio.create_task(search_muscleblaze(query, target_weight_g=target_weight_g)),
+        asyncio.create_task(search_shopify_store("nakpro.com", "Nakpro Direct", query, target_weight_g=target_weight_g)),
+        asyncio.create_task(search_shopify_store("asitisnutrition.com", "AS-IT-IS Direct", query, target_weight_g=target_weight_g)),
     ]
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    all_deals: List[StoreDeal] = []
+    done, pending = await asyncio.wait(task_list, timeout=3.5)
+    for p in pending:
+        p.cancel()
 
-    for r in results:
-        if isinstance(r, list):
-            all_deals.extend(r)
-        elif isinstance(r, Exception):
-            logger.warning("One store searcher raised exception", error=str(r))
+    all_deals: List[StoreDeal] = []
+    for t in done:
+        try:
+            r = t.result()
+            if isinstance(r, list):
+                all_deals.extend(r)
+        except Exception as exc:
+            logger.debug("One store searcher raised exception", error=str(exc))
 
     return all_deals

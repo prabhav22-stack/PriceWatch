@@ -85,6 +85,8 @@ def create_telegram_app(
         raise ValueError("TELEGRAM_BOT_TOKEN is missing")
 
     builder = ApplicationBuilder().token(token)
+    # Enable concurrent update processing so messages and callbacks don't block each other
+    builder.concurrent_updates(16)
     # Enable asynchronous rate limiting to respect Telegram's 30 msgs/sec global limit
     builder.rate_limiter(AIORateLimiter())
     # Configure native menu button and bot commands on initialization

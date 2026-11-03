@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from pricewatch.config import settings
+from pricewatch.core.cache import cache
 from pricewatch.domain.models import StoreDeal
 from pricewatch.logging_setup import get_logger
 from pricewatch.services.discovery_matcher import extract_core_categories
@@ -66,7 +67,41 @@ class ConversationalAdvisorService:
     """Answers natural language supplement questions, curates recommendations, and routes queries."""
 
     async def parse_chat_intent(self, user_text: str) -> ChatIntent:
-        """Use LLM (Groq / Gemini) to extract user intent, category, budget, and search parameters."""
+        """Extract user intent, category, and budget via fast-path heuristics and ultra-fast LLM."""
+        low = user_text.lower().strip()
+        words = set(re.findall(r"\b\w+\b", low))
+
+        # Fast-Path 1: Instant zero-latency handling of greetings & common commands (< 0.1ms)
+        greetings = {"hi", "hello", "hey", "help", "menu", "start", "assistant", "info"}
+        if words.intersection(greetings) or low in ("hello there", "hi there", "hey there"):
+            return ChatIntent(
+                intent_type="general_chat",
+                chat_reply=(
+                    "Hello! I'm your PriceWatch assistant. "
+                    "You can ask me for product recommendations (e.g. <i>'top 5 shilajit under 1000'</i>), "
+                    "compare prices across stores (e.g. <i>'Nakpro Perform 1kg'</i>), "
+                    "or paste any product link to start tracking!"
+                ),
+            )
+
+        # Fast-Path 2: Instant regex extraction for clear queries (e.g. "top 5 whey under 2000")
+        budget_m = re.search(r"(?:under|below|less than|max|budget)\s*(?:rs\.?|inr|₹)?\s*(\d+)", low)
+        max_budget = int(budget_m.group(1)) if budget_m else None
+        cat_match = next((c for c in ("shilajit", "whey", "creatine", "peanut butter", "fish oil") if c in low), None)
+        is_rec = any(w in low for w in ("top", "best", "recommend", "suggest", "cheapest", "under", "good"))
+
+        if is_rec and cat_match:
+            sub = next((s for s in ("isolate", "concentrate", "raw", "resin", "micronized", "unflavoured") if s in low), None)
+            return ChatIntent(
+                intent_type="recommendation",
+                category=cat_match,
+                sub_type=sub,
+                max_budget_inr=max_budget,
+                limit=5,
+                search_query=user_text,
+            )
+
+        # 3. Hybrid LLM Router with Groq (timeout: 2.5s) for natural / conversational phrasing
         prompt = (
             "You are an AI natural language router for an Indian fitness supplement bot.\n"
             "Analyze this user message and extract intent into JSON:\n"
@@ -87,7 +122,6 @@ class ConversationalAdvisorService:
             "Output ONLY valid JSON."
         )
 
-        # 1. Try Groq
         if llm_router.has_groq:
             try:
                 import httpx
@@ -99,7 +133,7 @@ class ConversationalAdvisorService:
                     "temperature": 0.1,
                     "response_format": {"type": "json_object"}
                 }
-                async with httpx.AsyncClient(timeout=4.0) as client:
+                async with httpx.AsyncClient(timeout=2.5) as client:
                     resp = await client.post(url, headers=headers, json=payload)
                     if resp.status_code == 200:
                         data = json.loads(resp.json()["choices"][0]["message"]["content"])
@@ -115,7 +149,7 @@ class ConversationalAdvisorService:
             except Exception as exc:
                 logger.debug("Groq intent parse exception", error=str(exc))
 
-        # 2. Try Gemini
+        # 4. Fallback: Gemini (timeout: 3.0s)
         if llm_router.has_gemini:
             try:
                 from pricewatch.services.gemini_service import gemini_service
@@ -135,28 +169,16 @@ class ConversationalAdvisorService:
             except Exception as exc:
                 logger.debug("Gemini intent parse exception", error=str(exc))
 
-        # Fallback: heuristics
-        low = user_text.lower().strip()
-        words = set(re.findall(r"\b\w+\b", low))
-        greetings = {"hi", "hello", "hey", "help", "menu", "start", "assistant", "info"}
-        if words.intersection(greetings) or low in ("hello there", "hi there", "hey there"):
-            return ChatIntent(
-                intent_type="general_chat",
-                chat_reply="Hello! I'm your PriceWatch assistant. You can ask me for product recommendations (e.g. 'top 5 shilajit under 1000'), compare prices across stores (e.g. 'Nakpro Perform 1kg'), or paste any product link to start tracking!",
-            )
-
-        budget_m = re.search(r"(?:under|below|less than|max|budget)\s*(?:rs\.?|inr|₹)?\s*(\d+)", low)
-        max_budget = int(budget_m.group(1)) if budget_m else None
-        is_rec = any(w in low for w in ("top", "best", "recommend", "suggest", "under", "good"))
-
+        # Final Fallback
         return ChatIntent(
             intent_type="recommendation" if is_rec else "comparison",
-            category=next((c for c in ("shilajit", "whey", "creatine", "peanut", "fish oil") if c in low), None),
+            category=cat_match,
             max_budget_inr=max_budget,
             limit=5,
             search_query=user_text,
         )
 
+    @cache(ttl="10m", key="rec:{category}:{sub_type}:{max_budget_inr}:{limit}", lock=True)
     async def generate_recommendations(
         self,
         category: str,
@@ -169,21 +191,28 @@ class ConversationalAdvisorService:
         search_term = f"{category} {sub_type or ''}".strip()
         logger.info("Generating curated recommendations", term=search_term, budget=max_budget_inr)
 
-        # 1. Query stores in parallel
+        # 1. Query stores in parallel with 3.5s deadline to eliminate hanging
         tasks = [
-            search_flipkart(search_term),
-            search_amazon(search_term),
-            search_hyugalife(search_term),
-            search_healthkart(search_term),
-            search_nutrabay(search_term),
-            search_shopify_store("nakpro.com", "Nakpro Direct", search_term),
-            search_shopify_store("asitisnutrition.com", "AS-IT-IS Direct", search_term),
+            asyncio.create_task(search_flipkart(search_term)),
+            asyncio.create_task(search_amazon(search_term)),
+            asyncio.create_task(search_hyugalife(search_term)),
+            asyncio.create_task(search_healthkart(search_term)),
+            asyncio.create_task(search_nutrabay(search_term)),
+            asyncio.create_task(search_shopify_store("nakpro.com", "Nakpro Direct", search_term)),
+            asyncio.create_task(search_shopify_store("asitisnutrition.com", "AS-IT-IS Direct", search_term)),
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        done, pending = await asyncio.wait(tasks, timeout=3.5)
+        for p in pending:
+            p.cancel()
+
         all_deals: List[StoreDeal] = []
-        for r in results:
-            if isinstance(r, list):
-                all_deals.extend(r)
+        for t in done:
+            try:
+                r = t.result()
+                if isinstance(r, list):
+                    all_deals.extend(r)
+            except Exception:
+                pass
 
         # 2. Strict Filter: Budget cap & Category relevance
         max_paise = (max_budget_inr * 100) if max_budget_inr else 999999999
