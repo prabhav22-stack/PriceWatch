@@ -27,11 +27,11 @@ class CouponInfo:
 
 # Regex patterns for on-page coupons across Amazon, Flipkart, and Shopify stores
 RUPEE_COUPON_PATTERN = re.compile(
-    r"(?:apply|save|flat|get|extra)\s*(?:extra\s*)?(?:₹|rs\.?)\s*(\d+(?:\.\d+)?)\s*(?:off|with\s+(?:the\s+)?coupon|coupon|voucher)?",
+    r"(?:apply|save|flat|get|extra|for)?\s*(?:extra\s*)?(?:₹|rs\.?)\s*(\d+(?:\.\d+)?)\s*(?:off|with\s+(?:the\s+)?coupon|coupon|voucher)",
     re.IGNORECASE,
 )
 PCT_COUPON_PATTERN = re.compile(
-    r"(?:apply|save|get|extra)\s*(?:extra\s*)?(\d+)%\s*(?:off|with\s+(?:the\s+)?coupon|coupon|voucher)",
+    r"(?:apply|save|get|extra|for)?\s*(?:extra\s*)?(\d+)%\s*(?:off|with\s+(?:the\s+)?coupon|coupon|voucher)",
     re.IGNORECASE,
 )
 CODE_COUPON_PATTERN = re.compile(
