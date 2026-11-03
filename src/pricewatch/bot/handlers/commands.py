@@ -377,6 +377,7 @@ async def compare_command_handler(update: Update, context: ContextTypes.DEFAULT_
                 pass
 
         result = await discovery_service.compare_query(effective_query)
+        context.user_data["last_comparison_result"] = result
         report_text = format_comparison_report(result)
         kb = build_comparison_keyboard(result)
         await status_msg.edit_text(
@@ -496,6 +497,52 @@ async def list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         else build_action_nav_keyboard("🥛 Add More Products", "amul_menu", "⚙️ Alert Settings", "cfg:refresh")
     )
     await update.effective_message.reply_html(text, reply_markup=kb)
+
+
+async def export_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /export command to export active tracked items to CSV and Google Sheets."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: Optional[TrackerService] = context.bot_data.get("tracker_service")
+    if not tracker_service:
+        await update.effective_message.reply_html("❌ Service unavailable.")
+        return
+
+    user_id = update.effective_user.id
+    items = await tracker_service.list_user_subscriptions(user_id)
+    if not items:
+        await update.effective_message.reply_html(
+            "📋 <b>No Tracked Products to Export</b>\n\n"
+            "You haven't tracked any products yet.\n"
+            "Paste any product link or search with <code>/compare</code> to start tracking!",
+            reply_markup=build_action_nav_keyboard("🔍 Compare Prices", "trk:compare", "🥛 Browse Amul", "amul_menu"),
+        )
+        return
+
+    from pricewatch.domain.models import Subscription
+    from pricewatch.services.export_service import export_service
+    csv_bytes = export_service.build_csv_document(items)
+
+    total_value = sum(
+        ((item[1].last_price_paise or 0) if isinstance(item[0], Subscription) else (item[0].last_price_paise or 0))
+        for item in items
+    ) / 100.0
+
+    caption = (
+        f"📊 <b>PriceWatch Portfolio Export</b>\n\n"
+        f"• 📦 <b>Active Tracked Items:</b> {len(items)}\n"
+        f"• 💰 <b>Total Portfolio Value:</b> ₹{total_value:,.2f}\n\n"
+        f"<i>💡 Download the CSV file above to open directly in Google Sheets, Microsoft Excel, or Apple Numbers.</i>\n"
+        f"<i>Supports one-click synchronization via Google Sheets API (gspread).</i>"
+    )
+
+    await update.effective_message.reply_document(
+        document=csv_bytes,
+        filename=f"PriceWatch_Tracked_Items_{user_id}.csv",
+        caption=caption,
+        parse_mode="HTML",
+    )
 
 
 async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1202,6 +1249,7 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         try:
             result = await discovery_service.compare_query(text)
+            context.user_data["last_comparison_result"] = result
             report_text = format_comparison_report(result)
             kb = build_comparison_keyboard(result)
             await status_msg.edit_text(
@@ -1312,6 +1360,7 @@ async def plain_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             try:
                 discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
                 result = await discovery_service.compare_query(search_query)
+                context.user_data["last_comparison_result"] = result
                 report_text = format_comparison_report(result)
                 kb = build_comparison_keyboard(result)
                 await status_msg.edit_text(

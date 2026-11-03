@@ -36,6 +36,8 @@ dependencies = [
     "crawlee[httpx]>=1.11.0",
     "pytesseract>=0.3.13",
     "paddleocr>=3.7.0",
+    "statsmodels>=0.14.0",
+    "gspread>=6.2.0",
 ]
 
 [project.optional-dependencies]

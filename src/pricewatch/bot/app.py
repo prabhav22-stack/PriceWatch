@@ -45,6 +45,7 @@ from pricewatch.bot.handlers.commands import (
     channels_command_handler,
     check_command_handler,
     compare_command_handler,
+    export_command_handler,
     favourites_command_handler,
     help_handler,
     history_command_handler,
@@ -122,6 +123,7 @@ def create_telegram_app(
     app.add_handler(CommandHandler("support", support_handler))
     app.add_handler(CommandHandler("map", map_handler))
     app.add_handler(CommandHandler("history", history_command_handler))
+    app.add_handler(CommandHandler("export", export_command_handler))
 
     # Catch /untrack_123, /history_123, and /instock_123 shorthand commands
     app.add_handler(MessageHandler(filters.Regex(r"^/untrack_\d+"), untrack_handler))

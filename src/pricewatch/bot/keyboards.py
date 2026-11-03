@@ -196,10 +196,11 @@ def build_comparison_keyboard(
         rows.append([InlineKeyboardButton(f"🛒 Open {label}", url=d.url)])
 
     action_row = []
+    action_row.append(InlineKeyboardButton("📸 Visual Deal Card", callback_data=f"card:cmp:{listing_id or 0}"))
     if listing_id:
         action_row.append(InlineKeyboardButton("🔄 Refresh Deals", callback_data=f"cmp:{listing_id}"))
-    action_row.append(InlineKeyboardButton("📋 Tracked Items", callback_data="nav:tracked"))
-    action_row.append(InlineKeyboardButton("🏠 Main Menu", callback_data="nav:home"))
+    action_row.append(InlineKeyboardButton("📋 Tracked", callback_data="nav:tracked"))
+    action_row.append(InlineKeyboardButton("🏠 Menu", callback_data="nav:home"))
     rows.append(action_row)
 
     webapp_url = os.getenv("WEBAPP_URL")

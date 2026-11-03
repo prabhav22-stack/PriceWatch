@@ -240,6 +240,28 @@ def format_comparison_report(result: ComparisonResult) -> str:
         lines.append(f"🎯 <b>Deal Quality:</b> {deal_score.badge} <b>{deal_score.verdict}</b> (Score: <b>{deal_score.score}/10</b>)")
         if deal_score.is_fake_discount:
             lines.append("   ⚠️ <i>Note: Advertised MRP is inflated above normal market rates.</i>")
+
+        # Predictive Buying Advice (Buy Now vs Wait)
+        try:
+            from pricewatch.services.price_predictor import price_forecaster
+            buy_adv = price_forecaster.evaluate(
+                current_price_paise=bd.price_paise,
+                history_paise=all_store_prices,
+                mrp_paise=bd.mrp_paise,
+            )
+            lines.append(price_forecaster.format_advice_markdown(buy_adv))
+        except Exception:
+            pass
+
+        # Supplement Authenticity & Purity Certification
+        try:
+            from pricewatch.services.purity_service import purity_service
+            purity_cert = purity_service.lookup(result.query_title)
+            if purity_cert:
+                lines.append(purity_service.format_badge_markdown(purity_cert))
+        except Exception:
+            pass
+
         lines.append("")
     elif not any(d.available for d in result.deals):
         lines.append("⚠️ <b>Stock Alert:</b> <i>This product appears to be Out of Stock across all checked stores right now.</i>\n")

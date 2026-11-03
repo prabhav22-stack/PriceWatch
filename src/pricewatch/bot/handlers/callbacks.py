@@ -1,5 +1,6 @@
 """Inline keyboard callback query handlers for stepwise onboarding, price charts, and Amul stock."""
 
+import html
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from telegram import LinkPreviewOptions, Update
@@ -289,6 +290,66 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                     f"❌ <b>Comparison failed:</b> {exc}",
                     parse_mode="HTML",
                 )
+            return
+
+        # 3cc. Visual Deal Snapshot Card: card:cmp:<listing_id>
+        if data.startswith("card:cmp:"):
+            listing_id_str = data.split(":")[2]
+            discovery_service: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
+            result = None
+
+            if listing_id_str and listing_id_str != "0":
+                listing = await tracker_service.get_listing(int(listing_id_str))
+                if listing:
+                    result = await discovery_service.compare_listing(listing)
+
+            if not result:
+                result = context.user_data.get("last_comparison_result")
+
+            if not result or not result.deals:
+                await query.answer("No deal comparison data available to render card.", show_alert=True)
+                return
+
+            try:
+                await query.answer("📸 Generating High-Def Deal Snapshot Card...")
+            except Exception:
+                pass
+
+            try:
+                from pricewatch.services.deal_card_generator import deal_card_generator
+                from pricewatch.services.purity_service import purity_service
+                from pricewatch.services.price_predictor import price_forecaster
+
+                purity_cert = purity_service.lookup(result.query_title)
+                buy_adv = None
+                if result.best_deal:
+                    all_prices = [d.price_paise for d in result.deals if d.price_paise > 0]
+                    buy_adv = price_forecaster.evaluate(
+                        current_price_paise=result.best_deal.price_paise,
+                        history_paise=all_prices,
+                        mrp_paise=result.best_deal.mrp_paise,
+                    )
+
+                card_png = deal_card_generator.generate_deal_card(
+                    product_title=result.query_title,
+                    best_deal=result.best_deal or result.deals[0],
+                    all_deals=result.deals,
+                    purity_cert=purity_cert,
+                    buy_advice=buy_adv,
+                )
+
+                await query.message.reply_photo(
+                    photo=card_png,
+                    caption=(
+                        f"📸 <b>PriceWatch Deal Snapshot Card</b>\n"
+                        f"📦 <b>{html.escape(result.query_title)}</b>\n\n"
+                        f"<i>💡 Share this card with gym friends or forward to your group!</i>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as card_exc:
+                logger.warning("Error generating deal card", error=str(card_exc))
+                await query.answer("Failed to generate deal card.", show_alert=True)
             return
 
         # 3d. Instant Live In-Stock Finder: stk:<listing_id>

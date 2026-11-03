@@ -254,6 +254,20 @@ class ConversationalAdvisorService:
             "<i>Ranked by verified seller trust, lab testing & buyer value:</i>\n",
         ]
 
+        # For the top recommended deal, evaluate Buy/Wait advice
+        if top_deals:
+            try:
+                from pricewatch.services.price_predictor import price_forecaster
+                top_d = top_deals[0]
+                adv = price_forecaster.evaluate(
+                    current_price_paise=top_d.price_paise,
+                    mrp_paise=top_d.mrp_paise,
+                )
+                verdict_icon = "🔥" if "BUY" in adv.verdict else "⏳"
+                lines.append(f"🎯 <b>Advisor Verdict:</b> {verdict_icon} <b>{adv.verdict}</b> ({adv.confidence_pct}% Confidence)\n📉 <i>{adv.summary}</i>\n")
+            except Exception:
+                pass
+
         buttons: List[List[InlineKeyboardButton]] = []
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
 
@@ -262,7 +276,17 @@ class ConversationalAdvisorService:
             price_str = format_paise_to_inr(deal.price_paise)
             mrp_str = f" <s>{format_paise_to_inr(deal.mrp_paise)}</s>" if deal.mrp_paise and deal.mrp_paise > deal.price_paise else ""
 
-            # Check for trust badge
+            # Check for purity certification and trust badge
+            from pricewatch.services.purity_service import purity_service
+            cert = purity_service.lookup(deal.product_title)
+            if cert and cert.claimed_protein_g and cert.tested_protein_g:
+                trust_badge = f"🛡️ <b>{cert.lab_tester} Verified:</b> {cert.tested_protein_g:g}g/{cert.scoop_size_g:g}g protein"
+            elif cert:
+                trust_badge = f"🛡️ <b>{cert.lab_tester} Tested:</b> {cert.status} (Heavy metals safe)"
+            elif is_trusted_brand(deal.product_title):
+                trust_badge = "🛡️ <b>Lab-Verified Brand</b>"
+            else:
+                trust_badge = "⭐ Verified Seller"
             trust_badge = "🛡️ <b>Lab-Verified Brand</b>" if is_trusted_brand(deal.product_title) else "⭐ Verified Seller"
 
             lines.append(f"{medal} <b>{deal.product_title}</b>")
