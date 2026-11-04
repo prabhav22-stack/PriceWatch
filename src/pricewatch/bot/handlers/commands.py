@@ -1116,6 +1116,35 @@ async def trackall_command_handler(update: Update, context: ContextTypes.DEFAULT
         )
 
 
+async def marketwatch_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle Market Watch — monitors all major whey brands for price crashes."""
+    if not update.effective_user or not update.effective_message:
+        return
+
+    tracker_service: TrackerService = context.bot_data["tracker_service"]
+    user = await tracker_service.get_or_register_user(telegram_id=update.effective_user.id)
+    current = getattr(user, "market_watch_enabled", False)
+    new_state = not current
+    await tracker_service.update_user_settings(user.telegram_id, market_watch_enabled=new_state)
+
+    if new_state:
+        await update.effective_message.reply_html(
+            "🔥 <b>Market Watch: ACTIVATED!</b>\n\n"
+            "I'll automatically monitor all major whey brands every 30 minutes:\n"
+            "• Nakpro, AS-IT-IS, MuscleBlaze, Avvatar\n"
+            "• Nutrabay, Amul, Optimum Nutrition\n\n"
+            "You'll get a Telegram alert whenever any product drops <b>≥25% off MRP</b>.\n"
+            "• 6-hour cooldown per product to avoid spam.\n"
+            "• Type <code>/marketwatch</code> again to turn it off, or use <code>/settings</code>."
+        )
+    else:
+        await update.effective_message.reply_html(
+            "💤 <b>Market Watch: OFF</b>\n\n"
+            "You will no longer receive automatic brand price crash alerts.\n"
+            "Type <code>/marketwatch</code> anytime to turn it back on."
+        )
+
+
 async def repeat_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /repeat <count> to configure dynamic decreasing stock updates."""
     if not update.effective_user or not update.effective_message:

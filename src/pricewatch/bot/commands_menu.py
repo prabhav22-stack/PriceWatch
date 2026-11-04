@@ -28,6 +28,7 @@ DEFAULT_BOT_COMMANDS: List[BotCommand] = [
     BotCommand("setpincode", "Set a new delivery pincode"),
     BotCommand("products", "Browse Amul products & stock"),
     BotCommand("trackall", "Toggle restock alerts for all protein items"),
+    BotCommand("marketwatch", "Toggle brand price crash alerts (Nakpro/MB/Amul/etc.)"),
     BotCommand("search", "Search Amul products by keyword"),
     BotCommand("favourites", "List your starred favourite products"),
     BotCommand("count", "Real-time warehouse stock counts"),

@@ -24,6 +24,7 @@ from pricewatch.logging_setup import get_logger, setup_logging
 from pricewatch.repositories.memory_repo import MemoryRepository
 from pricewatch.repositories.supabase_repo import SupabaseRepository
 from pricewatch.services.amul_poller import run_amul_poller
+from pricewatch.services.market_watch_poller import run_market_watch_poller
 from pricewatch.services.tracker_service import TrackerService
 from pricewatch.webapp.server import (
     get_catalog_data,
@@ -126,6 +127,7 @@ async def run_server_async(port: int, webhook_url: str) -> None:
 
     ptb_app = None
     amul_task = None
+    market_watch_task = None
 
     # Check if bot token is configured
     if settings.TELEGRAM_BOT_TOKEN:
@@ -162,6 +164,10 @@ async def run_server_async(port: int, webhook_url: str) -> None:
             amul_task = asyncio.create_task(
                 run_amul_poller(repo=repo, bot=ptb_app.bot, interval_seconds=settings.AMUL_CHECK_INTERVAL_SECONDS)
             )
+            # Launch Market Watch poller (Tier 2: 30 min — price crash alerts)
+            market_watch_task = asyncio.create_task(
+                run_market_watch_poller(repo=repo, bot=ptb_app.bot, interval_seconds=1800)
+            )
         except Exception as bot_exc:
             logger.error("Failed to initialize Telegram application", error=str(bot_exc))
     else:
@@ -193,6 +199,8 @@ async def run_server_async(port: int, webhook_url: str) -> None:
         logger.info("Shutting down bot and web server...")
         if amul_task:
             amul_task.cancel()
+        if market_watch_task:
+            market_watch_task.cancel()
         if ptb_app:
             await ptb_app.stop()
             await ptb_app.shutdown()

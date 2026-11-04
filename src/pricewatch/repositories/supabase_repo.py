@@ -76,10 +76,26 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
     async def update_user_settings(self, telegram_id: int, **kwargs) -> User:
         payload = dict(kwargs)
         payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-        res = self.client.table("users").update(payload).eq("telegram_id", telegram_id).execute()
-        row = res.data[0] if res.data else None
-        if row:
-            return User(**row)
+        try:
+            res = self.client.table("users").update(payload).eq("telegram_id", telegram_id).execute()
+            row = res.data[0] if res.data else None
+            if row:
+                return User(**row)
+        except Exception as exc:
+            logger.warning("Supabase update_user_settings failed with full payload", error=str(exc))
+            # If a column doesn't exist yet in remote schema, strip market_watch_enabled and retry
+            fallback_payload = dict(payload)
+            had_mw = fallback_payload.pop("market_watch_enabled", None)
+            try:
+                res = self.client.table("users").update(fallback_payload).eq("telegram_id", telegram_id).execute()
+                row = res.data[0] if res.data else None
+                if row:
+                    row_dict = dict(row)
+                    if had_mw is not None:
+                        row_dict["market_watch_enabled"] = had_mw
+                    return User(**row_dict)
+            except Exception as inner_exc:
+                logger.error("Supabase update_user_settings fallback failed", error=str(inner_exc))
         return await self.get_or_create_user(telegram_id)
 
     async def get_all_active_users(self) -> List[User]:

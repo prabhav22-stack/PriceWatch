@@ -85,6 +85,7 @@ class User(BaseModel):
     tracking_style: str = "always"
     max_notify_count: int = 5
     auto_order_enabled: bool = False
+    market_watch_enabled: bool = False
     auto_order_phone: Optional[str] = None
     auto_order_address_id: Optional[str] = None
     auto_order_auth_token: Optional[str] = None

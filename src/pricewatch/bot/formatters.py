@@ -804,17 +804,21 @@ def format_settings_menu(user: User) -> str:
     ao_label = "Enabled 🟢" if user.auto_order_enabled else "Disabled ⚪"
     all_protein_active = "ALL_PROTEIN" in (user.favourite_skus or [])
     all_protein_label = "Active 🔔 (All Items)" if all_protein_active else "Inactive 🔕 (Tracked/Favs Only)"
+    mw_enabled = getattr(user, "market_watch_enabled", False)
+    mw_label = "🔥 Active (All Major Whey Brands)" if mw_enabled else "💤 Off (Turn on to get flash-sale alerts)"
     phone_label = user.auto_order_phone or "Not configured"
     repeat_label = "♾️ Until Stock Runs Out (Dynamic)" if user.max_notify_count == 0 else f"{user.max_notify_count} Dynamic Alerts"
 
     return (
-        "⚙️ <b>Notification & Tracking Settings</b>\n\n"
+        "⚙️ <b>Notification &amp; Tracking Settings</b>\n\n"
         f"• <b>Default Pincode:</b> <code>{user.default_pincode or '842002'}</code> (use <code>/pincode</code> to change)\n"
         f"• <b>All-Protein Restock Alerts:</b> <b>{all_protein_label}</b>\n"
+        f"• <b>Market Watch:</b> <b>{mw_label}</b>\n"
         f"• <b>Repeat Stock Alerts:</b> <b>{repeat_label}</b>\n"
         f"• <b>Tracking Style:</b> <b>{style_label}</b>\n"
         f"• <b>Auto-Order Checkout:</b> <b>{ao_label}</b> ({phone_label})\n\n"
         "<b>Options Guide:</b>\n"
+        "• <b>Market Watch</b>: Monitors Nakpro, AS-IT-IS, MuscleBlaze, Avvatar, Nutrabay &amp; Amul every 30 min — alerts when price drops ≥25% off MRP.\n"
         "• <b>Repeat Stock Alerts</b>: Sends dynamic updates when stock decreases or periodic reminders while in stock (1-10 or continuous until OOS).\n"
         "• <b>All-Protein Alerts</b>: Instant notification when ANY protein product restocks in your warehouse.\n"
         "• <b>Always</b>: Keeps tracking the product continuously across restock cycles.\n"

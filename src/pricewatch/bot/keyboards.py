@@ -52,9 +52,15 @@ def build_settings_keyboard(user: User) -> InlineKeyboardMarkup:
     all_protein_on = "ALL_PROTEIN" in (user.favourite_skus or [])
     btn_ap = "🔔 All-Protein Alerts: ON" if all_protein_on else "🔕 All-Protein Alerts: OFF"
 
+    mw_enabled = getattr(user, "market_watch_enabled", False)
+    btn_mw = "🔥 Market Watch: ON" if mw_enabled else "💤 Market Watch: OFF"
+
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(btn_ap, callback_data="cfg:toggle_all_protein"),
+        ],
+        [
+            InlineKeyboardButton(btn_mw, callback_data="cfg:toggle_market_watch"),
         ],
         [
             InlineKeyboardButton(btn_1, callback_data="cfg:repeat:1"),

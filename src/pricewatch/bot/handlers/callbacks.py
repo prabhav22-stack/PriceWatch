@@ -977,6 +977,13 @@ async def callback_query_dispatcher(update: Update, context: ContextTypes.DEFAUL
                     favs.append("ALL_PROTEIN")
                     toast_text = "All-Protein alerts: Activated 🔔"
                 user = await tracker_service.update_user_settings(user_id, favourite_skus=favs)
+            elif cfg_action == "toggle_market_watch":
+                new_mw = not getattr(user, "market_watch_enabled", False)
+                user = await tracker_service.update_user_settings(user_id, market_watch_enabled=new_mw)
+                if new_mw:
+                    toast_text = "🔥 Market Watch: ON — You'll get flash-sale alerts!"
+                else:
+                    toast_text = "💤 Market Watch: OFF"
             elif cfg_action == "refresh":
                 toast_text = "Settings refreshed 🔄"
 
