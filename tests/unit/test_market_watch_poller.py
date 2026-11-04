@@ -96,10 +96,11 @@ async def test_fetch_deals_for_query_filters_low_discount():
     ]
 
     with patch("pricewatch.services.market_watch_poller.query_all_stores", new=AsyncMock(return_value=mock_results)):
-        deals = await _fetch_deals_for_query("nakpro whey")
-        assert len(deals) == 1
-        assert "Nakpro Gold Whey" in deals[0]["title"]
-        assert deals[0]["discount_pct"] == 30.0
+        with patch("pricewatch.services.market_watch_poller.link_checker.verify_url_live", new=AsyncMock(return_value=(True, "Mock Live"))):
+            deals = await _fetch_deals_for_query("nakpro whey")
+            assert len(deals) == 1
+            assert "Nakpro Gold Whey" in deals[0]["title"]
+            assert deals[0]["discount_pct"] == 30.0
 
 
 @pytest.mark.asyncio
@@ -126,13 +127,14 @@ async def test_run_market_watch_poller_alerts_opted_in_user():
     }]
 
     with patch("pricewatch.services.market_watch_poller.query_all_stores", new=AsyncMock(return_value=fake_deal)):
-        poller_task = asyncio.create_task(run_market_watch_poller(repo=repo, bot=bot, interval_seconds=1))
-        await asyncio.sleep(0.2)
-        poller_task.cancel()
-        try:
-            await poller_task
-        except asyncio.CancelledError:
-            pass
+        with patch("pricewatch.services.market_watch_poller.link_checker.verify_url_live", new=AsyncMock(return_value=(True, "Mock Live"))):
+            poller_task = asyncio.create_task(run_market_watch_poller(repo=repo, bot=bot, interval_seconds=1))
+            await asyncio.sleep(0.2)
+            poller_task.cancel()
+            try:
+                await poller_task
+            except asyncio.CancelledError:
+                pass
 
     # Bot should send message to User 1 only
     bot.send_message.assert_called()

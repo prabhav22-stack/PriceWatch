@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from pricewatch.logging_setup import get_logger
+from pricewatch.services.link_checker_service import link_checker
 from pricewatch.services.protein_validator import (
     estimate_protein_percentage,
     is_quality_whey,
@@ -191,7 +192,9 @@ async def _fetch_deals_for_query(query: str) -> List[dict]:
     # Sort deals so unflavoured whey appears at the top
     deduped_deals.sort(key=lambda x: (not x.get("is_unflavoured", False), -x.get("discount_pct", 0)))
 
-    return deduped_deals
+    # LinkChecker Guard: Verify links are live and drop any quarantined/dead links
+    live_deals = await link_checker.filter_live_deals(deduped_deals)
+    return live_deals
 
 
 async def run_market_watch_poller(

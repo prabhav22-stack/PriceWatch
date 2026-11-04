@@ -7,6 +7,7 @@ import urllib.parse
 from typing import Optional, Tuple
 
 from pricewatch.logging_setup import get_logger
+from pricewatch.services.flashtext_matcher import flashtext_matcher
 
 logger = get_logger("protein_validator")
 
@@ -42,9 +43,9 @@ UNFLAVOURED_KEYWORDS = [
 
 
 def is_unflavoured_whey(title: str, variant: str = "") -> bool:
-    """Returns True if the title or variant specifies raw/unflavoured whey."""
-    combined = f"{title} {variant}".lower()
-    return any(k in combined for k in UNFLAVOURED_KEYWORDS)
+    """Returns True if the title or variant specifies raw/unflavoured whey via FlashText."""
+    combined = f"{title} {variant}"
+    return flashtext_matcher.is_unflavoured(combined)
 
 
 def estimate_protein_percentage(title: str, variant: str = "") -> float:
@@ -112,28 +113,23 @@ def is_quality_whey(
     min_protein_pct: float = 65.0,
 ) -> Tuple[bool, str, float]:
     """
-    Validates whether a product meets quality standards:
+    Validates whether a product meets quality standards via FlashText + ratio verification:
     - Must be whey protein (not mass gainer, plant, pea, etc.)
     - Excludes cheap quality whey like Nakpro Impact
     - Protein content must be >= 65% by weight.
     """
-    combined = f"{title} {variant}".lower()
+    combined = f"{title} {variant}"
+    # 1. High-speed FlashText check
+    is_ok, reason, est_pct = flashtext_matcher.check_quality_whey(combined, min_protein_pct=min_protein_pct)
+    if not is_ok:
+        return False, reason, est_pct
 
-    # Rule 1: Exclude banned low-grade / filler products
-    for exc in EXCLUDED_KEYWORDS:
-        if exc in combined:
-            return False, f"Excluded low-quality/budget filler ({exc})", 0.0
+    # 2. Detailed percentage estimation if present in title
+    detailed_pct = estimate_protein_percentage(title, variant)
+    if detailed_pct < min_protein_pct:
+        return False, f"Protein content ({detailed_pct:.1f}%) is below {min_protein_pct}% threshold", detailed_pct
 
-    # Rule 2: Must be a whey product
-    if "whey" not in combined:
-        return False, "Not a whey protein product", 0.0
-
-    # Rule 3: Check protein percentage
-    est_pct = estimate_protein_percentage(title, variant)
-    if est_pct < min_protein_pct:
-        return False, f"Protein content ({est_pct:.1f}%) is below {min_protein_pct}% threshold", est_pct
-
-    return True, "Quality standard passed", est_pct
+    return True, "Quality standard passed", max(est_pct, detailed_pct)
 
 
 def is_valid_product_url(url: str) -> bool:

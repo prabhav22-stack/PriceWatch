@@ -39,6 +39,8 @@ dependencies = [
     "statsmodels>=0.14.0",
     "gspread>=6.2.0",
     "duckdb>=1.0.0",
+    "flashtext>=2.7",
+    "extruct>=0.18.0",
 ]
 
 [project.optional-dependencies]

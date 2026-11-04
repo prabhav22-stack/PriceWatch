@@ -15,6 +15,11 @@ from pricewatch.services.discovery_matcher import (
     extract_brand,
     extract_weight_in_grams,
 )
+from pricewatch.services.protein_validator import (
+    is_quality_whey,
+    is_unflavoured_whey,
+    is_valid_product_url,
+)
 from pricewatch.validation.normalizer import parse_inr_to_paise
 
 logger = get_logger("store_searchers")
@@ -646,13 +651,16 @@ async def search_amul(query: str, target_weight_g: Optional[int] = None) -> List
             price_paise = p.get("price_paise") or 0
             if price_paise <= 0:
                 continue
+            alias = p.get("alias") or p.get("sku") or ""
+            clean_alias = alias.replace(" ", "") if alias else ""
+            deal_url = p.get("url") or (f"https://shop.amul.com/en/product/{clean_alias}" if clean_alias else "https://shop.amul.com/en/product/amul-whey-protein-32-g-or-pack-of-30-sachets")
             deals.append(
                 StoreDeal(
                     store_name="Amul",
                     product_title=name,
                     price_paise=price_paise,
                     mrp_paise=p.get("mrp_paise") or price_paise,
-                    url=p.get("url") or "https://shop.amul.com/en/browse/protein",
+                    url=deal_url,
                     available=p.get("available", True),
                     variant_title=p.get("alias") or "",
                 )
@@ -693,4 +701,24 @@ async def query_all_stores(
         except Exception as exc:
             logger.debug("One store searcher raised exception", error=str(exc))
 
-    return all_deals
+    # Apply Quality Filter (>=65% protein by weight, drops Nakpro Impact / mass gainers) & valid URL guard
+    filtered_deals: List[StoreDeal] = []
+    for d in all_deals:
+        if not is_valid_product_url(d.url):
+            continue
+        # If query is specifically looking for whey, enforce quality whey rule
+        if "whey" in query.lower() or "protein" in query.lower():
+            is_ok, _, _ = is_quality_whey(d.product_title, d.variant_title or "")
+            if not is_ok:
+                continue
+        filtered_deals.append(d)
+
+    # Sort to prioritize unflavoured whey
+    filtered_deals.sort(
+        key=lambda d: (
+            not is_unflavoured_whey(f"{d.product_title} {d.variant_title or ''}"),
+            -(d.match_score or 0.0),
+        )
+    )
+
+    return filtered_deals
