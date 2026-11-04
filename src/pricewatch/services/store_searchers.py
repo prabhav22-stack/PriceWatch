@@ -615,6 +615,41 @@ async def search_nutrabay(query: str, target_weight_g: Optional[int] = None) -> 
     return deals
 
 
+async def search_amul(query: str, target_weight_g: Optional[int] = None) -> List[StoreDeal]:
+    """Search Amul Shop (StoreHippo) for live protein deals."""
+    deals: List[StoreDeal] = []
+    try:
+        from pricewatch.providers.amul import AmulProvider
+        provider = AmulProvider()
+        prods = await provider.fetch_category_products("protein", limit=40)
+        q_low = query.lower()
+        words = [w for w in q_low.split() if len(w) > 2 and w not in ("protein", "powder", "best", "top", "cheap")]
+        for p in prods:
+            name = p.get("name", "")
+            if not name:
+                continue
+            name_low = name.lower()
+            if words and not any(w in name_low for w in words):
+                continue
+            price_paise = p.get("price_paise") or 0
+            if price_paise <= 0:
+                continue
+            deals.append(
+                StoreDeal(
+                    store_name="Amul",
+                    product_title=name,
+                    price_paise=price_paise,
+                    mrp_paise=p.get("mrp_paise") or price_paise,
+                    url=p.get("url") or "https://shop.amul.com/en/browse/protein",
+                    available=p.get("available", True),
+                    variant_title=p.get("alias") or "",
+                )
+            )
+    except Exception as exc:
+        logger.debug("Amul search encountered error", query=query, error=str(exc))
+    return deals
+
+
 @cache(ttl="15m", key="all_stores:{query}:{target_weight_g}", lock=True)
 async def query_all_stores(
     query: str,
@@ -624,6 +659,7 @@ async def query_all_stores(
     task_list = [
         asyncio.create_task(search_flipkart(query, target_weight_g=target_weight_g)),
         asyncio.create_task(search_amazon(query, target_weight_g=target_weight_g)),
+        asyncio.create_task(search_amul(query, target_weight_g=target_weight_g)),
         asyncio.create_task(search_hyugalife(query, target_weight_g=target_weight_g)),
         asyncio.create_task(search_healthkart(query, target_weight_g=target_weight_g)),
         asyncio.create_task(search_nutrabay(query, target_weight_g=target_weight_g)),

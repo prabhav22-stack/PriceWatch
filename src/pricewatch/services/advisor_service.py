@@ -22,6 +22,7 @@ from pricewatch.services.discovery_matcher import extract_core_categories
 from pricewatch.services.llm_router import llm_router
 from pricewatch.services.store_searchers import (
     search_amazon,
+    search_amul,
     search_flipkart,
     search_healthkart,
     search_hyugalife,
@@ -195,6 +196,7 @@ class ConversationalAdvisorService:
         tasks = [
             asyncio.create_task(search_flipkart(search_term)),
             asyncio.create_task(search_amazon(search_term)),
+            asyncio.create_task(search_amul(search_term)),
             asyncio.create_task(search_hyugalife(search_term)),
             asyncio.create_task(search_healthkart(search_term)),
             asyncio.create_task(search_nutrabay(search_term)),
