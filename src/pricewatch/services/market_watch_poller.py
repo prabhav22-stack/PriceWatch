@@ -102,14 +102,26 @@ async def _fetch_deals_for_query(query: str) -> List[dict]:
 
     deals: List[dict] = []
     for deal in results:
-        price_paise: Optional[int] = deal.get("price_paise") or deal.get("price")
-        mrp_paise: Optional[int] = deal.get("mrp_paise") or deal.get("mrp")
+        if hasattr(deal, "model_dump"):
+            deal_data = deal.model_dump()
+        elif isinstance(deal, dict):
+            deal_data = deal
+        else:
+            deal_data = {
+                "product_title": getattr(deal, "product_title", None) or getattr(deal, "title", None),
+                "price_paise": getattr(deal, "price_paise", None) or getattr(deal, "price", None),
+                "mrp_paise": getattr(deal, "mrp_paise", None) or getattr(deal, "mrp", None),
+                "store_name": getattr(deal, "store_name", None) or getattr(deal, "store", None),
+                "url": getattr(deal, "url", None),
+            }
 
-        # Normalise: some store_searchers return rupee floats, others paise ints
-        if price_paise and price_paise > 50_000:
-            # likely paise — convert
-            price_inr = price_paise / 100
-            mrp_inr = (mrp_paise / 100) if mrp_paise else 0
+        price_paise: Optional[int] = deal_data.get("price_paise") or deal_data.get("price")
+        mrp_paise: Optional[int] = deal_data.get("mrp_paise") or deal_data.get("mrp")
+
+        # Normalise: StoreDeals are in paise (e.g., 149900 paise = ₹1,499)
+        if price_paise and price_paise > 10_000:
+            price_inr = price_paise / 100.0
+            mrp_inr = (mrp_paise / 100.0) if mrp_paise else 0.0
         else:
             price_inr = float(price_paise or 0)
             mrp_inr = float(mrp_paise or 0)
@@ -117,21 +129,35 @@ async def _fetch_deals_for_query(query: str) -> List[dict]:
         if price_inr <= 0 or mrp_inr <= 0 or mrp_inr <= price_inr:
             continue
 
-        discount_pct = (mrp_inr - price_inr) / mrp_inr * 100
+        discount_pct = (mrp_inr - price_inr) / mrp_inr * 100.0
         if discount_pct < DISCOUNT_THRESHOLD_PCT:
             continue
 
+        title = deal_data.get("product_title") or deal_data.get("title") or query.title()
+        store = deal_data.get("store_name") or deal_data.get("store") or deal_data.get("provider_code") or "Store"
+        url = deal_data.get("url") or deal_data.get("canonical_url") or ""
+        prod_key = deal_data.get("external_product_id") or url or title
+
         deals.append({
-            "title": deal.get("title") or deal.get("product_title") or query.title(),
+            "title": title,
             "price_inr": price_inr,
             "mrp_inr": mrp_inr,
             "discount_pct": discount_pct,
-            "store": deal.get("store") or deal.get("provider_code") or "Store",
-            "url": deal.get("url") or deal.get("canonical_url") or "",
-            "product_key": deal.get("external_product_id") or deal.get("url") or query,
+            "store": store,
+            "url": url,
+            "product_key": prod_key,
         })
 
-    return deals
+    # In-cycle deduplication by (clean title, store) to avoid spamming multiple identical variant records
+    seen_keys = set()
+    deduped_deals: List[dict] = []
+    for d in deals:
+        dedup_key = (d["title"].strip().lower()[:40], d["store"].strip().lower(), round(d["price_inr"]))
+        if dedup_key not in seen_keys:
+            seen_keys.add(dedup_key)
+            deduped_deals.append(d)
+
+    return deduped_deals
 
 
 async def run_market_watch_poller(
