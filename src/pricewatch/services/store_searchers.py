@@ -67,7 +67,9 @@ async def search_hyugalife(query: str, target_weight_g: Optional[int] = None) ->
             # Stock status
             is_in_stock = (it.get("stock_status") == "IN_STOCK")
             url_key = it.get("url_key") or ""
-            deal_url = f"https://hyugalife.com/product/{url_key}" if url_key else url
+            if not url_key:
+                continue
+            deal_url = f"https://hyugalife.com/product/{url_key}"
             brand = it.get("brand") or ""
 
             cand_weight = extract_weight_in_grams(name)
@@ -148,7 +150,9 @@ async def search_healthkart(query: str, target_weight_g: Optional[int] = None) -
 
             is_in_stock = not bool(v.get("oos", False))
             path = v.get("url") or ""
-            deal_url = f"https://www.healthkart.com{path}" if path.startswith("/") else (path or url)
+            if not path or not ("/sv/" in path or "/sp/" in path):
+                continue
+            deal_url = f"https://www.healthkart.com{path}" if path.startswith("/") else path
             brand = v.get("brandName") or v.get("brName") or ""
 
             cand_weight = extract_weight_in_grams(name)
@@ -351,7 +355,9 @@ def _search_amazon_sync(query: str, target_weight_g: Optional[int] = None) -> Li
             price_paise = parse_inr_to_paise(price_text) or 0
 
             asin = it.attributes.get("data-asin", "")
-            deal_url = f"https://www.amazon.in/dp/{asin}" if asin else url
+            if not asin or len(asin) != 10:
+                continue
+            deal_url = f"https://www.amazon.in/dp/{asin}"
 
             cand_weight = extract_weight_in_grams(title)
             score, is_ok = compute_match_score(
@@ -426,7 +432,9 @@ def _search_flipkart_sync(query: str, target_weight_g: Optional[int] = None) -> 
 
             link = c.css_first('a[href*="/p/"]')
             href = link.attributes.get('href', "") if link else ""
-            deal_url = f"https://www.flipkart.com{href.split('?')[0]}" if href else url
+            if not href or "/p/" not in href:
+                continue
+            deal_url = f"https://www.flipkart.com{href.split('?')[0]}"
 
             cand_weight = extract_weight_in_grams(full_title)
             score, is_ok = compute_match_score(
@@ -496,7 +504,9 @@ async def search_muscleblaze(query: str, target_weight_g: Optional[int] = None) 
 
             is_in_stock = not bool(v.get("oos", False))
             path = v.get("url") or ""
-            deal_url = f"https://www.muscleblaze.com{path}" if path.startswith("/") else (path or url)
+            if not path or not ("/sv/" in path or "/sp/" in path):
+                continue
+            deal_url = f"https://www.muscleblaze.com{path}" if path.startswith("/") else path
 
             cand_weight = extract_weight_in_grams(name)
             score, is_ok = compute_match_score(
@@ -583,7 +593,9 @@ async def search_nutrabay(query: str, target_weight_g: Optional[int] = None) -> 
 
             is_in_stock = bool(p.get("stock_status", True))
             slug = p.get("slug") or ""
-            deal_url = f"https://nutrabay.com/product/{slug}" if slug else url
+            if not slug or len(slug) < 3:
+                continue
+            deal_url = f"https://nutrabay.com/product/{slug}"
 
             cand_weight = extract_weight_in_grams(full_title)
             score, is_ok = compute_match_score(

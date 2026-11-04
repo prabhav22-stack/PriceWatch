@@ -79,11 +79,11 @@ async def test_fetch_deals_for_query_filters_low_discount():
     mock_results = [
         # Deal 1: 30% discount -> qualifies (>= 25%)
         {
-            "title": "Nakpro Whey 1kg",
+            "title": "Nakpro Gold Whey 80% 1kg Unflavoured",
             "price": 140000,  # paise
             "mrp": 200000,    # paise -> 30% off
             "store": "Nakpro",
-            "url": "https://nakpro.com/deal",
+            "url": "https://nakpro.com/products/nakpro-whey-gold",
         },
         # Deal 2: 10% discount -> filtered out
         {
@@ -91,14 +91,14 @@ async def test_fetch_deals_for_query_filters_low_discount():
             "price": 180000,
             "mrp": 200000,
             "store": "Store",
-            "url": "https://store.com/item",
+            "url": "https://asitisnutrition.com/products/expensive-whey",
         },
     ]
 
     with patch("pricewatch.services.market_watch_poller.query_all_stores", new=AsyncMock(return_value=mock_results)):
         deals = await _fetch_deals_for_query("nakpro whey")
         assert len(deals) == 1
-        assert deals[0]["title"] == "Nakpro Whey 1kg"
+        assert "Nakpro Gold Whey" in deals[0]["title"]
         assert deals[0]["discount_pct"] == 30.0
 
 
@@ -122,7 +122,7 @@ async def test_run_market_watch_poller_alerts_opted_in_user():
         "price": 199900,
         "mrp": 329900,  # ~39% discount
         "store": "Flipkart",
-        "url": "https://flipkart.com/mb-biozyme",
+        "url": "https://www.flipkart.com/muscleblaze-biozyme/p/itm12345",
     }]
 
     with patch("pricewatch.services.market_watch_poller.query_all_stores", new=AsyncMock(return_value=fake_deal)):

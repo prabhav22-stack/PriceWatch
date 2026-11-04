@@ -19,21 +19,30 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from pricewatch.logging_setup import get_logger
+from pricewatch.services.protein_validator import (
+    estimate_protein_percentage,
+    is_quality_whey,
+    is_unflavoured_whey,
+    is_valid_product_url,
+)
 from pricewatch.services.store_searchers import query_all_stores
 
 logger = get_logger("market_watch_poller")
 
 # ---------------------------------------------------------------------------
-# Brands / queries to monitor
+# Brands / queries to monitor — Primary focus: Pure Unflavoured Whey (>=65% protein)
 # ---------------------------------------------------------------------------
 WATCH_QUERIES: List[str] = [
-    "nakpro whey protein",
-    "as-it-is whey protein",
-    "muscleblaze biozyme whey",
-    "avvatar whey protein",
-    "nutrabay whey protein",
-    "amul whey protein",
-    "optimum nutrition gold standard whey",
+    # Top preference: Unflavoured / Raw Whey of Major Brands
+    "as-it-is whey concentrate 80% unflavoured",
+    "as-it-is whey isolate unflavoured",
+    "amul raw whey protein concentrate 80%",
+    "nakpro platinum whey isolate unflavoured",
+    "nakpro gold whey concentrate unflavoured",
+    "nutrabay pure raw whey concentrate unflavoured",
+    "avvatar 100% whey protein unflavoured",
+    "muscleblaze raw whey 80% unflavoured",
+    "optimum nutrition gold standard whey unflavoured",
 ]
 
 # Trigger alert when: (MRP - price) / MRP >= threshold
@@ -57,13 +66,20 @@ def _build_alert_text(deal: dict) -> str:
     discount_pct = deal.get("discount_pct", 0)
     store = deal.get("store", "Store")
     url = deal.get("url", "")
+    is_unflavoured = deal.get("is_unflavoured", False)
+    est_protein_pct = deal.get("protein_pct", 80.0)
 
     mrp_str = f"<s>₹{mrp:,.0f}</s> " if mrp and mrp > price else ""
     url_part = f'\n\n⚡ <a href="{url}">Buy Now Before It\'s Gone!</a>' if url else ""
 
+    flavour_badge = "🥛 <b>Flavor:</b> Unflavoured / Raw Whey\n" if is_unflavoured else ""
+    protein_badge = f"🧪 <b>Verified Protein:</b> ~{est_protein_pct:.0f}% by weight (Quality Whey)\n"
+
     return (
         "🔥 <b>Market Watch Alert!</b>\n\n"
         f"🛒 <b>{title}</b>\n"
+        f"{flavour_badge}"
+        f"{protein_badge}"
         f"💰 ₹{price:,.0f} {mrp_str}— <b>{discount_pct:.0f}% OFF</b>\n"
         f"🏪 {store}"
         f"{url_part}\n\n"
@@ -138,6 +154,19 @@ async def _fetch_deals_for_query(query: str) -> List[dict]:
         url = deal_data.get("url") or deal_data.get("canonical_url") or ""
         prod_key = deal_data.get("external_product_id") or url or title
 
+        # Strict Quality Guard: Must be >= 65% protein by weight, exclude cheap Nakpro Impact & mass gainers
+        is_ok, reason, est_pct = is_quality_whey(title, min_protein_pct=65.0)
+        if not is_ok:
+            logger.debug("Market watch filtered out deal", title=title, reason=reason)
+            continue
+
+        # Strict URL Guard: Must actually lead directly to a product page, NOT a search query
+        if not is_valid_product_url(url):
+            logger.debug("Market watch filtered invalid URL", url=url, title=title)
+            continue
+
+        is_unflav = is_unflavoured_whey(title)
+
         deals.append({
             "title": title,
             "price_inr": price_inr,
@@ -146,6 +175,8 @@ async def _fetch_deals_for_query(query: str) -> List[dict]:
             "store": store,
             "url": url,
             "product_key": prod_key,
+            "is_unflavoured": is_unflav,
+            "protein_pct": est_pct,
         })
 
     # In-cycle deduplication by (clean title, store) to avoid spamming multiple identical variant records
@@ -156,6 +187,9 @@ async def _fetch_deals_for_query(query: str) -> List[dict]:
         if dedup_key not in seen_keys:
             seen_keys.add(dedup_key)
             deduped_deals.append(d)
+
+    # Sort deals so unflavoured whey appears at the top
+    deduped_deals.sort(key=lambda x: (not x.get("is_unflavoured", False), -x.get("discount_pct", 0)))
 
     return deduped_deals
 
