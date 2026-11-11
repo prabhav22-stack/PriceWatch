@@ -1,7 +1,11 @@
 """Supabase / PostgreSQL repository adapter."""
 
+from __future__ import annotations
+
+import asyncio
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, TypeVar
 
 from cachetools import TTLCache
 from supabase import Client, create_client
@@ -23,13 +27,53 @@ from pricewatch.repositories.base import (
 )
 
 logger = get_logger("supabase_repo")
+T = TypeVar("T")
+
+
+class AsyncTTLMemoryCache:
+    """Coroutine-safe in-memory TTL cache with stampede protection."""
+
+    def __init__(self, maxsize: int = 512, ttl: float = 60.0) -> None:
+        self._cache: TTLCache[str, Any] = TTLCache(maxsize=maxsize, ttl=ttl)
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    async def get_or_set(
+        self, key: str, loader: Callable[[], Coroutine[Any, Any, T]]
+    ) -> T:
+        # Fast path: return immediately in ~0.05ms if cached
+        if key in self._cache:
+            return self._cache[key]
+
+        # Slow path: acquire per-key lock so concurrent requests only fire 1 query
+        async with self._locks[key]:
+            if key in self._cache:
+                return self._cache[key]
+            value = await loader()
+            self._cache[key] = value
+            return value
+
+    def invalidate(self, key: str) -> None:
+        self._cache.pop(key, None)
+
+    def invalidate_prefix(self, prefix: str) -> None:
+        keys_to_delete = [k for k in self._cache.keys() if k.startswith(prefix)]
+        for k in keys_to_delete:
+            self._cache.pop(k, None)
 
 
 class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
-    """Production data access adapter powered by Supabase."""
+    """Production data access adapter powered by Supabase with stampede-safe caching."""
 
-    def __init__(self, client: Optional[Client] = None):
-        self._cache = TTLCache(maxsize=200, ttl=60)
+    def __init__(self, client: Optional[Client] = None, worker_id: str = "render-web"):
+        self.worker_id = worker_id
+        # Hot-path stampede-safe caches
+        self.deals_cache = AsyncTTLMemoryCache(maxsize=64, ttl=60.0)
+        self.catalog_cache = AsyncTTLMemoryCache(maxsize=256, ttl=120.0)
+        self.user_cache = AsyncTTLMemoryCache(maxsize=1024, ttl=300.0)
+        self.substore_cache = AsyncTTLMemoryCache(maxsize=2048, ttl=86400.0)
+        self.provider_cache = AsyncTTLMemoryCache(maxsize=128, ttl=60.0)
+        self._cache = self.provider_cache._cache  # Backwards compatibility
+
         if client:
             self.client = client
         else:
@@ -43,23 +87,31 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
     async def get_or_create_user(
         self, telegram_id: int, username: Optional[str] = None, first_name: Optional[str] = None
     ) -> User:
-        data = {
-            "telegram_id": telegram_id,
-            "username": username,
-            "first_name": first_name,
-            "is_active": True,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        resp = self.client.table("users").upsert(data, on_conflict="telegram_id").execute()
-        row = resp.data[0] if resp.data else data
-        return User(**row)
+        cache_key = f"user:{telegram_id}"
+
+        async def _load() -> User:
+            data = {
+                "telegram_id": telegram_id,
+                "username": username,
+                "first_name": first_name,
+                "is_active": True,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            resp = self.client.table("users").upsert(data, on_conflict="telegram_id").execute()
+            row = resp.data[0] if resp.data else data
+            return User(**row)
+
+        return await self.user_cache.get_or_set(cache_key, _load)
 
     async def update_default_pincode(self, telegram_id: int, pincode: str) -> None:
         self.client.table("users").update({"default_pincode": pincode}).eq("telegram_id", telegram_id).execute()
+        self.user_cache.invalidate(f"user:{telegram_id}")
 
     async def deactivate_user(self, telegram_id: int) -> None:
         self.client.table("users").update({"is_active": False}).eq("telegram_id", telegram_id).execute()
         self.client.table("subscriptions").update({"is_active": False}).eq("telegram_id", telegram_id).execute()
+        self.user_cache.invalidate(f"user:{telegram_id}")
+        self.user_cache.invalidate_prefix(f"subs:{telegram_id}")
 
     async def toggle_favourite_sku(self, telegram_id: int, sku: str) -> bool:
         user = await self.get_or_create_user(telegram_id)
@@ -73,6 +125,7 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         self.client.table("users").update(
             {"favourite_skus": favs, "updated_at": datetime.now(timezone.utc).isoformat()}
         ).eq("telegram_id", telegram_id).execute()
+        self.user_cache.invalidate(f"user:{telegram_id}")
         return added
 
     async def update_user_settings(self, telegram_id: int, **kwargs) -> User:
@@ -95,9 +148,11 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
                     row_dict = dict(row)
                     if had_mw is not None:
                         row_dict["market_watch_enabled"] = had_mw
+                    self.user_cache.invalidate(f"user:{telegram_id}")
                     return User(**row_dict)
             except Exception as inner_exc:
                 logger.error("Supabase update_user_settings fallback failed", error=str(inner_exc))
+        self.user_cache.invalidate(f"user:{telegram_id}")
         return await self.get_or_create_user(telegram_id)
 
     async def get_all_active_users(self) -> List[User]:
@@ -186,8 +241,10 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         if canonical_url:
             payload["canonical_url"] = canonical_url
         self.client.table("canonical_listings").update(payload).eq("id", listing_id).execute()
-        # Invalidate provider cache
-        self._cache.clear()
+        # Invalidate caches
+        self.provider_cache.invalidate_prefix("listings:provider:")
+        self.catalog_cache.invalidate_prefix("catalog:")
+        self.deals_cache.invalidate_prefix("deals:")
 
     async def record_observation(self, observation: PriceObservation) -> None:
         payload = {
@@ -249,19 +306,18 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         self, provider_code: str
     ) -> List[CanonicalListing]:
         cache_key = f"listings:provider:{provider_code}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
 
-        res = (
-            self.client.table("canonical_listings")
-            .select("*")
-            .eq("provider_code", provider_code)
-            .eq("is_monitored", True)
-            .execute()
-        )
-        listings = [CanonicalListing(**row) for row in res.data]
-        self._cache[cache_key] = listings
-        return listings
+        async def _load() -> List[CanonicalListing]:
+            res = (
+                self.client.table("canonical_listings")
+                .select("*")
+                .eq("provider_code", provider_code)
+                .eq("is_monitored", True)
+                .execute()
+            )
+            return [CanonicalListing(**row) for row in res.data]
+
+        return await self.provider_cache.get_or_set(cache_key, _load)
 
     # --- Subscription Repo ---
     async def create_or_update_subscription(self, sub: Subscription) -> Subscription:
@@ -275,28 +331,34 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         res = self.client.table("subscriptions").upsert(payload, on_conflict="telegram_id,listing_id").execute()
+        self.user_cache.invalidate_prefix(f"subs:{sub.telegram_id}")
         return Subscription(**res.data[0])
 
     async def get_user_subscriptions(
         self, telegram_id: int, active_only: bool = True
     ) -> List[Tuple[Subscription, CanonicalListing]]:
-        query = (
-            self.client.table("subscriptions")
-            .select("*, canonical_listings(*)")
-            .eq("telegram_id", telegram_id)
-        )
-        if active_only:
-            query = query.eq("is_active", True)
+        cache_key = f"subs:{telegram_id}:active={active_only}"
 
-        res = query.execute()
-        results: List[Tuple[Subscription, CanonicalListing]] = []
-        for row in res.data:
-            listing_data = row.pop("canonical_listings", None)
-            if listing_data:
-                sub = Subscription(**row)
-                listing = CanonicalListing(**listing_data)
-                results.append((sub, listing))
-        return results
+        async def _load() -> List[Tuple[Subscription, CanonicalListing]]:
+            query = (
+                self.client.table("subscriptions")
+                .select("*, canonical_listings(*)")
+                .eq("telegram_id", telegram_id)
+            )
+            if active_only:
+                query = query.eq("is_active", True)
+
+            res = query.execute()
+            results: List[Tuple[Subscription, CanonicalListing]] = []
+            for row in res.data:
+                listing_data = row.pop("canonical_listings", None)
+                if listing_data:
+                    sub = Subscription(**row)
+                    listing = CanonicalListing(**listing_data)
+                    results.append((sub, listing))
+            return results
+
+        return await self.user_cache.get_or_set(cache_key, _load)
 
     async def deactivate_subscription(self, telegram_id: int, listing_id: int) -> bool:
         res = (
@@ -306,6 +368,7 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             .eq("listing_id", listing_id)
             .execute()
         )
+        self.user_cache.invalidate_prefix(f"subs:{telegram_id}")
         return bool(res.data)
 
     async def get_active_subscriptions_for_listing(self, listing_id: int) -> List[Subscription]:

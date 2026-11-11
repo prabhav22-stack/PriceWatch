@@ -28,6 +28,9 @@ from pricewatch.services.market_watch_poller import run_market_watch_poller
 from pricewatch.services.outbox_drainer import run_outbox_drainer
 from pricewatch.services.tracker_service import TrackerService
 from pricewatch.webapp.server import (
+    DealsAPIHandler,
+    SubscriptionsAPIHandler,
+    TelegramMiniAppAuthenticator,
     get_catalog_data,
     serve_catalog,
     serve_dashboard,
@@ -189,6 +192,8 @@ async def run_server_async(port: int, webhook_url: str) -> None:
         (r"/health", HealthHandler),
         (r"/", HealthHandler),
         (r"/api/v1/catalog", CatalogApiHandler),
+        (r"/api/v1/deals", DealsAPIHandler, dict(repo=repo)),
+        (r"/api/v1/subscriptions", SubscriptionsAPIHandler, dict(repo=repo)),
         (r"/webapp/catalog", CatalogPageHandler),
         (r"/webapp/dashboard/([0-9]+)", DashboardPageHandler),
     ]

@@ -7,15 +7,18 @@ Features:
 - Prometheus metrics exporter at /metrics.
 """
 
+import functools
 import hashlib
 import hmac
 import json
 import os
+import time
 import urllib.parse
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request, Response, Header
 from fastapi.responses import HTMLResponse, JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+import tornado.web
 
 from pricewatch.config import settings
 from pricewatch.domain.models import CanonicalListing, PriceObservation
@@ -100,6 +103,164 @@ def validate_telegram_init_data(init_data: str, bot_token: Optional[str] = None)
     except Exception as exc:
         logger.warning("Error validating Telegram initData", error=str(exc))
         return None
+
+
+class TelegramMiniAppAuthenticator:
+    """Validates Telegram WebApp initData per official Telegram specification."""
+
+    def __init__(self, bot_token: Optional[str] = None, max_age_seconds: int = 86400) -> None:
+        token = bot_token or settings.TELEGRAM_BOT_TOKEN or ""
+        self._secret_key: bytes = hmac.new(
+            key=b"WebAppData",
+            msg=token.encode("utf-8"),
+            digestmod=hashlib.sha256,
+        ).digest()
+        self.max_age_seconds = max_age_seconds
+
+    def verify_init_data(self, raw_init_data: str) -> dict[str, Any]:
+        """
+        Verifies HMAC-SHA256 signature and expiration of Telegram WebApp.initData.
+        Returns the parsed user dictionary on success, or raises ValueError.
+        """
+        if not raw_init_data:
+            raise ValueError("Missing X-Telegram-Init-Data")
+
+        parsed_pairs = dict(urllib.parse.parse_qsl(raw_init_data, keep_blank_values=True))
+        received_hash = parsed_pairs.pop("hash", None)
+        if not received_hash:
+            raise ValueError("Missing hash in initData")
+
+        try:
+            auth_date = int(parsed_pairs.get("auth_date", "0"))
+        except ValueError:
+            raise ValueError("Invalid auth_date")
+
+        if (time.time() - auth_date) > self.max_age_seconds:
+            raise ValueError("Expired initData session")
+
+        data_check_string = "\n".join(
+            f"{k}={v}" for k, v in sorted(parsed_pairs.items())
+        )
+
+        computed_hash = hmac.new(
+            key=self._secret_key,
+            msg=data_check_string.encode("utf-8"),
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(computed_hash, received_hash):
+            raise ValueError("Invalid initData signature")
+
+        user_json = parsed_pairs.get("user")
+        if not user_json:
+            raise ValueError("Missing user payload in initData")
+
+        return json.loads(user_json)
+
+
+def require_tma_auth(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator for Tornado RequestHandlers requiring verified Telegram Mini App user."""
+
+    @functools.wraps(method)
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        raw_init_data = (
+            self.request.headers.get("X-Telegram-Init-Data")
+            or self.get_query_argument("initData", default="")
+        )
+        try:
+            auth = getattr(self, "auth", None) or TelegramMiniAppAuthenticator()
+            self.tma_user = auth.verify_init_data(raw_init_data)
+        except Exception as exc:
+            raise tornado.web.HTTPError(401, reason=str(exc))
+        return await method(self, *args, **kwargs)
+
+    return wrapper
+
+
+class BaseTMAHandler(tornado.web.RequestHandler):
+    """Base handler injecting repository, auth, and security headers."""
+
+    def initialize(
+        self, repo: Any = None, auth: Optional[TelegramMiniAppAuthenticator] = None
+    ) -> None:
+        self.repo = repo or _repo
+        self.auth = auth or TelegramMiniAppAuthenticator()
+        self.tma_user: Optional[Dict[str, Any]] = None
+
+    def set_default_headers(self) -> None:
+        self.set_header("Content-Type", "application/json; charset=utf-8")
+        self.set_header("X-Content-Type-Options", "nosniff")
+
+    def write_error(self, status_code: int, **kwargs: Any) -> None:
+        reason = self._reason or "Internal Error"
+        self.finish(json.dumps({"ok": False, "error": reason, "code": status_code}))
+
+
+class DealsAPIHandler(BaseTMAHandler):
+    """TMA endpoint serving top deals with TMA HMAC authentication."""
+
+    @require_tma_auth
+    async def get(self) -> None:
+        unflavoured = self.get_query_argument("unflavoured", "false").lower() == "true"
+        limit = min(int(self.get_query_argument("limit", "15")), 50)
+        catalog = await get_catalog_data()
+        deals = catalog.get("items", [])
+        if unflavoured:
+            deals = [d for d in deals if d.get("is_unflavoured")]
+        deals = deals[:limit]
+        self.write(json.dumps({
+            "ok": True,
+            "user_id": self.tma_user.get("id"),
+            "deals": deals,
+        }))
+
+
+class SubscriptionsAPIHandler(BaseTMAHandler):
+    """TMA endpoint for user subscriptions with TMA HMAC authentication."""
+
+    @require_tma_auth
+    async def get(self) -> None:
+        tg_id = int(self.tma_user["id"])
+        subs = []
+        if self.repo and hasattr(self.repo, "get_user_subscriptions"):
+            raw_subs = await self.repo.get_user_subscriptions(tg_id)
+            subs = [
+                {
+                    "subscription_id": s.id,
+                    "target_price_rs": s.target_price_paise / 100.0,
+                    "listing_id": l.id,
+                    "title": l.product_title,
+                    "variant": l.variant_title,
+                    "current_price_rs": (l.last_price_paise / 100.0) if l.last_price_paise else None,
+                    "available": l.last_available,
+                }
+                for s, l in raw_subs
+            ]
+        self.write(json.dumps({"ok": True, "subscriptions": subs}))
+
+    @require_tma_auth
+    async def post(self) -> None:
+        tg_id = int(self.tma_user["id"])
+        body = json.loads(self.request.body.decode("utf-8"))
+        listing_id = int(body["listing_id"])
+        is_active = False
+        if self.repo and hasattr(self.repo, "get_user_subscriptions"):
+            user_subs = await self.repo.get_user_subscriptions(tg_id)
+            match = next((s for s, l in user_subs if l.id == listing_id), None)
+            if match and hasattr(self.repo, "deactivate_subscription"):
+                await self.repo.deactivate_subscription(tg_id, listing_id)
+                is_active = False
+            elif hasattr(self.repo, "create_or_update_subscription"):
+                from pricewatch.domain.models import Subscription
+                target_paise = int(body.get("target_price_paise", 0)) or 100000
+                new_sub = Subscription(
+                    telegram_id=tg_id,
+                    listing_id=listing_id,
+                    target_price_paise=target_paise,
+                )
+                await self.repo.create_or_update_subscription(new_sub)
+                is_active = True
+        self.write(json.dumps({"ok": True, "is_subscribed": is_active}))
 
 
 def set_webapp_context(repo: Any, discovery_service: Any = None):
@@ -752,6 +913,20 @@ async def serve_catalog():
   <script>
     const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
     if (tg) {{ tg.ready(); tg.expand(); }}
+
+    async function apiFetch(endpoint, options = {{}}) {{
+      const initData = window.Telegram?.WebApp?.initData || "";
+      const response = await fetch(endpoint, {{
+        ...options,
+        headers: {{
+          "Content-Type": "application/json",
+          "X-Telegram-Init-Data": initData,
+          ...(options.headers || {{}}),
+        }},
+      }});
+      if (!response.ok) throw new Error(`API error: ${{response.status}}`);
+      return response.json();
+    }}
 
     const allItems = {items_json};
     let activeFilter = 'all';

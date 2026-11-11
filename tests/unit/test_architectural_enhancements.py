@@ -406,4 +406,76 @@ def test_quickchart_url_generation():
     assert "bkg=%230f172a" in url
 
 
+@pytest.mark.asyncio
+async def test_async_ttl_memory_cache_stampede_protection():
+    """Verify AsyncTTLMemoryCache calls loader only once under concurrent cache-miss stampede."""
+    import asyncio
+    from pricewatch.repositories.supabase_repo import AsyncTTLMemoryCache
+
+    cache = AsyncTTLMemoryCache(maxsize=10, ttl=60.0)
+    call_count = 0
+
+    async def slow_loader():
+        nonlocal call_count
+        call_count += 1
+        await asyncio.sleep(0.05)
+        return "loaded-value"
+
+    # Launch 5 concurrent requests for the same key
+    results = await asyncio.gather(
+        cache.get_or_set("test-key", slow_loader),
+        cache.get_or_set("test-key", slow_loader),
+        cache.get_or_set("test-key", slow_loader),
+        cache.get_or_set("test-key", slow_loader),
+        cache.get_or_set("test-key", slow_loader),
+    )
+
+    assert results == ["loaded-value"] * 5
+    assert call_count == 1  # Only 1 execution occurred despite 5 concurrent callers!
+
+
+def test_telegram_mini_app_authenticator_expiry_and_signature():
+    """Verify TelegramMiniAppAuthenticator validates signature, extracts user, and rejects expired tokens."""
+    import hashlib
+    import hmac
+    import time
+    from pricewatch.webapp.server import TelegramMiniAppAuthenticator
+
+    bot_token = "123456:TEST_TOKEN_SECRET"
+    auth = TelegramMiniAppAuthenticator(bot_token=bot_token, max_age_seconds=3600)
+
+    now_ts = int(time.time())
+    raw_params = {
+        "auth_date": str(now_ts),
+        "query_id": "AAHdF6IQAAAAAN0XohDhrOrc",
+        "user": '{"id":987654321,"first_name":"Alice","username":"alice_test"}',
+    }
+    data_check_string = "\n".join(f"{k}={raw_params[k]}" for k in sorted(raw_params.keys()))
+    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
+    valid_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    valid_init_data = f"auth_date={raw_params['auth_date']}&query_id={raw_params['query_id']}&user={raw_params['user']}&hash={valid_hash}"
+
+    # 1. Valid data
+    user_info = auth.verify_init_data(valid_init_data)
+    assert user_info["id"] == 987654321
+    assert user_info["username"] == "alice_test"
+
+    # 2. Tampered signature
+    with pytest.raises(ValueError, match="Invalid initData signature"):
+        auth.verify_init_data(valid_init_data.replace(valid_hash, "badhash12345"))
+
+    # 3. Expired token (> 3600 seconds old)
+    expired_auth = TelegramMiniAppAuthenticator(bot_token=bot_token, max_age_seconds=10)
+    expired_raw_params = dict(raw_params)
+    expired_raw_params["auth_date"] = str(now_ts - 20)
+    exp_check_str = "\n".join(f"{k}={expired_raw_params[k]}" for k in sorted(expired_raw_params.keys()))
+    exp_hash = hmac.new(secret_key, exp_check_str.encode("utf-8"), hashlib.sha256).hexdigest()
+    expired_init_data = f"auth_date={expired_raw_params['auth_date']}&query_id={expired_raw_params['query_id']}&user={expired_raw_params['user']}&hash={exp_hash}"
+
+    with pytest.raises(ValueError, match="Expired initData session"):
+        expired_auth.verify_init_data(expired_init_data)
+
+
+
 
