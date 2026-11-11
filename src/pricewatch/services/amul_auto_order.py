@@ -5,7 +5,7 @@ and automatically submit checkout for target SKUs the second inventory drops.
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import httpx
 
 from pricewatch.config import Settings
@@ -16,8 +16,26 @@ logger = get_logger("amul_auto_order")
 
 
 class AmulAutoOrderService:
+    # 24-hour in-memory idempotency cooldown lock: (phone, sku, yyyymmdd)
+    _executed_orders_cooldown: Dict[str, float] = {}
+
     def __init__(self, provider: Optional[AmulProvider] = None):
         self.provider = provider or AmulProvider()
+
+    @classmethod
+    def _is_idempotency_locked(cls, phone: str, sku: str) -> bool:
+        """Check if an order was recently placed within 24h to prevent double-ordering on stock flutter."""
+        key = f"{phone.strip()}:{sku.strip()}"
+        last_time = cls._executed_orders_cooldown.get(key)
+        if last_time and (time.time() - last_time < 86400):  # 24 hours
+            return True
+        return False
+
+    @classmethod
+    def _set_idempotency_lock(cls, phone: str, sku: str) -> None:
+        """Lock SKU checkout for 24h following a successful COD order placement."""
+        key = f"{phone.strip()}:{sku.strip()}"
+        cls._executed_orders_cooldown[key] = time.time()
 
     async def request_otp(self, phone: str, pincode: str = "842002") -> Dict[str, Any]:
         """Request 6-digit login OTP from Amul StoreHippo."""
@@ -108,7 +126,14 @@ class AmulAutoOrderService:
         pincode: str = "842002",
         address_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Submit automated instant checkout for restocked Amul SKU."""
+        """Submit automated instant checkout for restocked Amul SKU with 24h idempotency safeguard."""
+        if self._is_idempotency_locked(phone, sku):
+            logger.warning("Auto-order suppressed by 24h idempotency lock", phone=phone, sku=sku)
+            return {
+                "success": False,
+                "message": f"Auto-Order already placed within the last 24 hours for SKU {sku}. Idempotency lock active.",
+            }
+
         logger.info("Executing restock auto-order", sku=sku, phone=phone, pincode=pincode)
         async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=20.0) as client:
             try:
@@ -145,6 +170,8 @@ class AmulAutoOrderService:
                 if order_resp.status_code in (200, 201):
                     order_data = order_resp.json()
                     order_id = order_data.get("order_id") or order_data.get("_id") or f"AMUL-{int(time.time())}"
+                    # Lock for 24h to avoid flapping double orders
+                    self._set_idempotency_lock(phone, sku)
                     return {
                         "success": True,
                         "order_id": str(order_id),

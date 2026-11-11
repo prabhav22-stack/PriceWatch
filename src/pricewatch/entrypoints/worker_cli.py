@@ -75,17 +75,24 @@ async def run_worker(
 
         if res.success and res.quote:
             succeeded += 1
-            # Record observation if price changed or daily heartbeat
-            obs = PriceObservation(
-                listing_id=listing.id,
-                price_paise=res.quote.price_paise,
-                mrp_paise=res.quote.mrp_paise,
-                available=res.quote.available,
-                seller_name=res.quote.seller_name,
-                extraction_method=res.quote.extraction_method,
-                is_verified=res.is_verified,
+            # Record observation only if price, MRP, or availability changed, or if no previous price recorded (prevents table bloat)
+            state_changed = (
+                listing.last_price_paise != res.quote.price_paise
+                or listing.last_mrp_paise != res.quote.mrp_paise
+                or listing.last_available != res.quote.available
+                or listing.last_price_paise is None
             )
-            await repo.record_observation(obs)
+            if state_changed:
+                obs = PriceObservation(
+                    listing_id=listing.id,
+                    price_paise=res.quote.price_paise,
+                    mrp_paise=res.quote.mrp_paise,
+                    available=res.quote.available,
+                    seller_name=res.quote.seller_name,
+                    extraction_method=res.quote.extraction_method,
+                    is_verified=res.is_verified,
+                )
+                await repo.record_observation(obs)
 
             # Evaluate alerts for subscribers
             alerts = await alert_service.process_quote(listing, res.quote)

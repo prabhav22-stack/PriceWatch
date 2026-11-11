@@ -58,13 +58,23 @@ async def run_amul_poller(
             if not pincodes:
                 pincodes.add("842002")
 
-            # 3. Batch check Amul catalog for each pincode
-            for pincode in pincodes:
+            # 3. Deduplicate pincodes by regional substore to prevent API multiplication
+            substore_to_pincode: Dict[str, str] = {}
+            for pin in pincodes:
+                try:
+                    s_id = await provider.resolve_substore_for_pincode(pin)
+                    if s_id not in substore_to_pincode:
+                        substore_to_pincode[s_id] = pin
+                except Exception:
+                    substore_to_pincode[pin] = pin
+
+            # Check each unique regional substore once per cycle
+            for substore_id, pincode in substore_to_pincode.items():
                 try:
                     category_items = await provider.fetch_category_products(
                         category_id="protein", pincode=pincode, limit=100
                     )
-                    substore = await provider.resolve_substore_for_pincode(pincode)
+                    substore = substore_id
 
                     relevant_users = [
                         u for u in users

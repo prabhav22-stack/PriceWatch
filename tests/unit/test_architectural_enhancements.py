@@ -180,3 +180,59 @@ async def test_channels_command_and_callback():
         mock_n.return_value = True
         await callback_query_dispatcher(cb_update, context)
         cb_query.answer.assert_called()
+
+
+def test_telegram_init_data_hmac_validation():
+    """Verify Telegram WebApp initData HMAC-SHA256 signature verification."""
+    import hashlib
+    import hmac
+    from pricewatch.webapp.server import validate_telegram_init_data
+
+    bot_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+    raw_params = {
+        "auth_date": "1662771500",
+        "query_id": "AAHdF6IQAAAAAN0XohDhrOrc",
+        "user": '{"id":279058397,"first_name":"Vladislav","last_name":"K","username":"vladislav"}',
+    }
+    data_check_string = "\n".join(f"{k}={raw_params[k]}" for k in sorted(raw_params.keys()))
+    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
+    valid_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    valid_init_data = f"auth_date={raw_params['auth_date']}&query_id={raw_params['query_id']}&user={raw_params['user']}&hash={valid_hash}"
+
+    # Valid data test
+    res = validate_telegram_init_data(valid_init_data, bot_token=bot_token)
+    assert res is not None
+    assert res["user_data"]["id"] == 279058397
+
+    # Tampered / invalid hash test
+    invalid_init_data = valid_init_data.replace(valid_hash, "deadbeef1234567890")
+    res_tampered = validate_telegram_init_data(invalid_init_data, bot_token=bot_token)
+    assert res_tampered is None
+
+
+def test_amazon_bot_block_detection():
+    """Verify Amazon provider raises BotBlockedError on captcha strings and throttled shells."""
+    from pricewatch.domain.exceptions import BotBlockedError
+    from pricewatch.providers.amazon_fresh import AmazonFreshProvider
+
+    captcha_html = "<html><head><title>Robot Check</title></head><body>Type the characters you see in this image</body></html>"
+    with pytest.raises(BotBlockedError):
+        AmazonFreshProvider.parse_html_content(captcha_html)
+
+    throttled_empty_html = "<html><head><title>Amazon</title></head><body></body></html>"
+    with pytest.raises(BotBlockedError):
+        AmazonFreshProvider.parse_html_content(throttled_empty_html)
+
+
+def test_amul_auto_order_idempotency_cooldown():
+    """Verify Amul auto-order 24-hour idempotency cooldown prevents duplicate triggers."""
+    from pricewatch.services.amul_auto_order import AmulAutoOrderService
+
+    phone = "9876543210"
+    sku = "AMUL_WHEY_CHOCOLATE_1KG"
+
+    assert not AmulAutoOrderService._is_idempotency_locked(phone, sku)
+    AmulAutoOrderService._set_idempotency_lock(phone, sku)
+    assert AmulAutoOrderService._is_idempotency_locked(phone, sku)
+

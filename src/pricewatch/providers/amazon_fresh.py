@@ -63,7 +63,12 @@ class AmazonFreshProvider(BaseProvider):
         # Check for CAPTCHA / bot block page
         title_node = parser.css_first("title")
         page_title = title_node.text(strip=True) if title_node else ""
-        if "Robot Check" in page_title or "validateCaptcha" in html:
+        if (
+            "Robot Check" in page_title
+            or "validateCaptcha" in html
+            or "Type the characters you see in this image" in html
+            or "Sorry, we just need to make sure you're not a robot" in html
+        ):
             raise BotBlockedError("Amazon returned Robot Check / CAPTCHA challenge page")
 
         # Verify pincode if specified
@@ -87,6 +92,9 @@ class AmazonFreshProvider(BaseProvider):
         title_elem = parser.css_first("#productTitle") or parser.css_first("#title")
         if title_elem:
             product_title = title_elem.text(strip=True)
+        elif not parser.css_first("#dp") and len(html) < 3000:
+            # Empty shell or throttled response missing DOM anchors
+            raise BotBlockedError("Amazon returned empty or throttled HTML shell without product DOM")
 
         # Check Availability
         available = True

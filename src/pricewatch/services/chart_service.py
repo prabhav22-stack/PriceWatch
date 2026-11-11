@@ -1,5 +1,6 @@
 """Price history chart generator with headless Matplotlib."""
 
+import asyncio
 import io
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -18,6 +19,24 @@ logger = get_logger("chart_service")
 
 class ChartService:
     """Generates modern dark-themed price history charts as in-memory PNGs."""
+
+    @classmethod
+    async def generate_price_history_chart_async(
+        cls,
+        listing: CanonicalListing,
+        observations: List[PriceObservation],
+        target_price_paise: Optional[int] = None,
+    ) -> Optional[bytes]:
+        """
+        Asynchronously generate a price history chart by offloading heavy
+        Matplotlib rendering to a worker thread to keep the event loop unblocked.
+        """
+        return await asyncio.to_thread(
+            cls.generate_price_history_chart,
+            listing=listing,
+            observations=observations,
+            target_price_paise=target_price_paise,
+        )
 
     @staticmethod
     def generate_price_history_chart(

@@ -7,10 +7,13 @@ Features:
 - Prometheus metrics exporter at /metrics.
 """
 
+import hashlib
+import hmac
 import json
 import os
+import urllib.parse
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, Header
 from fastapi.responses import HTMLResponse, JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
@@ -56,6 +59,47 @@ METRIC_CHECK_LATENCY = Histogram(
 # In-memory reference to repository (populated by app runner)
 _repo = None
 _discovery_svc = None
+
+
+def validate_telegram_init_data(init_data: str, bot_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Validate Telegram WebApp initData HMAC-SHA256 signature.
+
+    Returns the parsed initData dictionary if signature is valid, None otherwise.
+    Reference: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+    """
+    if not init_data:
+        return None
+    token = bot_token or settings.TELEGRAM_BOT_TOKEN
+    if not token:
+        logger.warning("Cannot validate init_data: TELEGRAM_BOT_TOKEN not configured")
+        return None
+
+    try:
+        parsed_data = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+        received_hash = parsed_data.pop("hash", None)
+        if not received_hash:
+            return None
+
+        # Build data_check_string by sorting keys alphabetically
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
+
+        # Secret key is HMAC-SHA256 of bot token with constant key b"WebAppData"
+        secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
+
+        # Calculate expected HMAC-SHA256 hex digest
+        calculated_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+
+        if hmac.compare_digest(calculated_hash, received_hash):
+            if "user" in parsed_data:
+                try:
+                    parsed_data["user_data"] = json.loads(parsed_data["user"])
+                except Exception:
+                    pass
+            return parsed_data
+        return None
+    except Exception as exc:
+        logger.warning("Error validating Telegram initData", error=str(exc))
+        return None
 
 
 def set_webapp_context(repo: Any, discovery_service: Any = None):

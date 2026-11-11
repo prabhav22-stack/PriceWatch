@@ -269,6 +269,8 @@ async def run_market_watch_poller(
                                 product=deal["title"],
                                 discount_pct=round(deal["discount_pct"], 1),
                             )
+                            # Friendly broadcast pace: 50ms pause prevents burst floods
+                            await asyncio.sleep(0.05)
                         except Exception as send_err:
                             logger.warning(
                                 "Failed to send market watch alert",
