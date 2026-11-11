@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(default="", description="PostgreSQL transaction pooler connection URL")
     SUPABASE_URL: str = Field(default="", description="Supabase project URL")
     SUPABASE_KEY: str = Field(default="", description="Supabase service role or anon key")
+    SUPABASE_SERVICE_ROLE_KEY: str = Field(default="", description="Supabase service role key (bypasses RLS for backend)")
     SUPABASE_ACCESS_TOKEN: str = Field(default="", description="Supabase Management API access token")
 
     # Application & Environment

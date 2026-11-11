@@ -50,10 +50,10 @@ class AmulStockTracker:
         self._client = supabase_client
         if not self._client:
             settings = Settings()
-            if settings.SUPABASE_URL and (settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN):
+            if settings.SUPABASE_URL and (settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN):
                 try:
                     from supabase import create_client
-                    key = settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN
+                    key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN
                     self._client = create_client(settings.SUPABASE_URL, key)
                 except Exception as e:
                     logger.warning("Could not initialize Supabase client in AmulStockTracker", error=str(e))

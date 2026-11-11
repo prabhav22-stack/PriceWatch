@@ -32,7 +32,7 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             self.client = client
         else:
             url = settings.SUPABASE_URL
-            key = settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN
+            key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY or settings.SUPABASE_ACCESS_TOKEN
             if not url or not key:
                 raise ValueError("SUPABASE_URL and SUPABASE_KEY must be configured")
             self.client = create_client(url, key)
