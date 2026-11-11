@@ -236,3 +236,111 @@ def test_amul_auto_order_idempotency_cooldown():
     AmulAutoOrderService._set_idempotency_lock(phone, sku)
     assert AmulAutoOrderService._is_idempotency_locked(phone, sku)
 
+
+@pytest.mark.asyncio
+async def test_outbox_drainer_success():
+    """Verify OutboxDrainer drains pending notifications at rate limit and marks SENT."""
+    from pricewatch.domain.enums import AlertType, NotificationStatus
+    from pricewatch.domain.models import NotificationLog, Subscription
+    from pricewatch.services.outbox_drainer import OutboxDrainer
+
+    repo = MemoryRepository()
+    listing = CanonicalListing(
+        id=101,
+        provider_code="shopify:nakpro.com",
+        external_product_id="whey-isolate",
+        external_variant_id="var-1",
+        canonical_url="https://nakpro.com/products/whey-isolate",
+        product_title="Nakpro Whey Isolate",
+        variant_title="1kg Unflavoured",
+        last_price_paise=249900,
+        last_available=True,
+    )
+    repo.listings[101] = listing
+
+    sub = Subscription(
+        id=202,
+        telegram_id=12345678,
+        listing_id=101,
+        target_price_paise=260000,
+        is_active=True,
+    )
+    repo.subscriptions[202] = sub
+
+    notif = NotificationLog(
+        subscription_id=202,
+        alert_type=AlertType.TARGET_REACHED,
+        price_paise=249900,
+        idempotency_key="sub-202:test",
+        status=NotificationStatus.PENDING,
+    )
+    notif_id = await repo.log_notification(notif)
+    assert notif_id is not None
+
+    mock_bot = AsyncMock()
+    mock_msg = MagicMock()
+    mock_msg.message_id = 98765
+    mock_bot.send_message.return_value = mock_msg
+
+    drainer = OutboxDrainer(repo=repo, bot=mock_bot, rate_limit_per_second=50)
+    sent_count = await drainer.drain_batch(limit=10)
+
+    assert sent_count == 1
+    mock_bot.send_message.assert_called_once()
+    assert repo.notifications[notif_id].status == NotificationStatus.SENT
+    assert repo.notifications[notif_id].telegram_message_id == 98765
+
+
+@pytest.mark.asyncio
+async def test_shopify_brand_catalog_delta_caching():
+    """Verify ShopifyProvider single-request brand catalog caching avoids redundant requests."""
+    from pricewatch.providers.shopify import ShopifyProvider
+
+    mock_catalog = {
+        "products": [
+            {
+                "id": 1,
+                "handle": "gold-whey",
+                "vendor": "Nakpro",
+                "variants": [
+                    {
+                        "id": 9999,
+                        "title": "1kg Chocolate",
+                        "price": "1899.00",
+                        "compare_at_price": "2999.00",
+                        "available": True,
+                    }
+                ],
+            }
+        ]
+    }
+
+    with patch("pricewatch.providers.http_client.http_client.get", new_callable=AsyncMock) as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_catalog
+        mock_get.return_value = mock_resp
+
+        provider = ShopifyProvider()
+        # Reset cache for test domain
+        ShopifyProvider._BRAND_PRODUCTS_CACHE.clear()
+
+        quote = await provider.fetch_quote(
+            canonical_url="https://testbrand.com/products/gold-whey?variant=9999",
+            external_product_id="gold-whey",
+            external_variant_id="9999",
+        )
+        assert quote.price_paise == 189900
+        assert quote.mrp_paise == 299900
+        assert quote.extraction_method == "shopify_catalog_delta"
+
+        # Second fetch should hit in-memory brand cache without another HTTP call
+        quote2 = await provider.fetch_quote(
+            canonical_url="https://testbrand.com/products/gold-whey?variant=9999",
+            external_product_id="gold-whey",
+            external_variant_id="9999",
+        )
+        assert quote2.price_paise == 189900
+        assert mock_get.call_count == 1  # Only 1 request made for both checks!
+
+

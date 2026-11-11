@@ -68,13 +68,38 @@ async def run_worker(
     succeeded = 0
     failed = 0
     total_alerts = 0
+    provider_consecutive_blocks: dict[str, int] = {}
 
     for listing in claimed:
+        # Check if provider circuit breaker is currently tripped in this run
+        if provider_consecutive_blocks.get(listing.provider_code, 0) >= 3:
+            logger.warning(
+                "Skipping listing due to tripped provider circuit breaker",
+                provider=listing.provider_code,
+                listing_id=listing.id,
+            )
+            # Push check into the future by 30 mins + jitter
+            import random
+            trip_backoff = timedelta(minutes=30 + random.randint(1, 15))
+            await repo.update_listing_state(
+                listing_id=listing.id,
+                last_price_paise=listing.last_price_paise,
+                last_mrp_paise=listing.last_mrp_paise,
+                last_available=listing.last_available,
+                next_check_at=datetime.now(timezone.utc) + trip_backoff,
+                consecutive_failures=listing.consecutive_failures + 1,
+                error_code="CIRCUIT_BREAKER_TRIPPED",
+                error_message="Provider circuit breaker tripped due to 3+ consecutive bot blocks/rate limits",
+            )
+            failed += 1
+            continue
+
         res = await orchestrator.check_listing(listing, median_7d_paise=listing.last_price_paise)
         now = datetime.now(timezone.utc)
 
         if res.success and res.quote:
             succeeded += 1
+            provider_consecutive_blocks[listing.provider_code] = 0
             # Record observation only if price, MRP, or availability changed, or if no previous price recorded (prevents table bloat)
             state_changed = (
                 listing.last_price_paise != res.quote.price_paise
@@ -112,9 +137,27 @@ async def run_worker(
         else:
             failed += 1
             consecutive = listing.consecutive_failures + 1
+
+            # Detect bot blocks, rate limits, or anti-scraping challenges
+            err_msg = res.error or "Unknown error"
+            is_bot_or_limit = any(k in err_msg.lower() for k in ("bot", "robot", "captcha", "403", "429", "blocked"))
+            if is_bot_or_limit:
+                current_blocks = provider_consecutive_blocks.get(listing.provider_code, 0) + 1
+                provider_consecutive_blocks[listing.provider_code] = current_blocks
+                if current_blocks >= 3:
+                    logger.warning(
+                        "Trip circuit breaker for provider: 3+ consecutive bot blocks or rate limits",
+                        provider=listing.provider_code,
+                    )
+
             interval_td = get_provider_check_interval(listing.provider_code)
             base_minutes = max(1, int(interval_td.total_seconds() // 60))
-            backoff_minutes = min(360, base_minutes * (2 ** min(consecutive, 5)))
+            if is_bot_or_limit:
+                # Minimum 30 minutes backoff + jitter for bot blocks
+                import random
+                backoff_minutes = max(30, base_minutes * (2 ** min(consecutive, 5))) + random.randint(1, 15)
+            else:
+                backoff_minutes = min(360, base_minutes * (2 ** min(consecutive, 5)))
             next_check = now + timedelta(minutes=backoff_minutes)
 
             await repo.update_listing_state(
@@ -124,8 +167,8 @@ async def run_worker(
                 last_available=listing.last_available,
                 next_check_at=next_check,
                 consecutive_failures=consecutive,
-                error_code="CHECK_FAILED",
-                error_message=res.error or "Unknown error",
+                error_code="BOT_BLOCKED" if is_bot_or_limit else "CHECK_FAILED",
+                error_message=err_msg,
             )
 
     logger.info(

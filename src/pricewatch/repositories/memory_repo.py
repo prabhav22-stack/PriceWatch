@@ -1,6 +1,6 @@
 """In-memory repository implementation for unit testing and offline development."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from pricewatch.domain.models import (
@@ -289,3 +289,59 @@ class MemoryRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         saved = notif.model_copy(update={"id": new_id, "created_at": datetime.now(timezone.utc)})
         self.notifications[new_id] = saved
         return new_id
+
+    async def get_pending_notifications(
+        self, limit: int = 50
+    ) -> List[Tuple[NotificationLog, Subscription, CanonicalListing]]:
+        now = datetime.now(timezone.utc)
+        results = []
+        from pricewatch.domain.enums import NotificationStatus
+
+        for notif in sorted(self.notifications.values(), key=lambda n: n.created_at or now):
+            if notif.status in (NotificationStatus.PENDING, NotificationStatus.FAILED_RETRYABLE):
+                if notif.next_retry_at and notif.next_retry_at > now:
+                    continue
+                sub = self.subscriptions.get(notif.subscription_id)
+                if not sub:
+                    continue
+                listing = self.listings.get(sub.listing_id)
+                if not listing:
+                    continue
+                results.append((notif, sub, listing))
+                if len(results) >= limit:
+                    break
+        return results
+
+    async def mark_notification_sent(
+        self, notification_id: int, telegram_message_id: Optional[int] = None
+    ) -> None:
+        from pricewatch.domain.enums import NotificationStatus
+
+        if notification_id in self.notifications:
+            notif = self.notifications[notification_id]
+            self.notifications[notification_id] = notif.model_copy(
+                update={
+                    "status": NotificationStatus.SENT,
+                    "sent_at": datetime.now(timezone.utc),
+                    "telegram_message_id": telegram_message_id,
+                }
+            )
+
+    async def mark_notification_failed(
+        self, notification_id: int, error_detail: str, retry_count: int, retryable: bool = True
+    ) -> None:
+        from pricewatch.domain.enums import NotificationStatus
+
+        if notification_id in self.notifications:
+            notif = self.notifications[notification_id]
+            backoff_secs = min(3600, 30 * (2 ** min(retry_count, 5)))
+            next_retry = datetime.now(timezone.utc) + timedelta(seconds=backoff_secs)
+            self.notifications[notification_id] = notif.model_copy(
+                update={
+                    "status": NotificationStatus.FAILED_RETRYABLE if retryable else NotificationStatus.FAILED_PERMANENT,
+                    "error_detail": error_detail,
+                    "retry_count": retry_count,
+                    "next_retry_at": next_retry if retryable else None,
+                }
+            )
+

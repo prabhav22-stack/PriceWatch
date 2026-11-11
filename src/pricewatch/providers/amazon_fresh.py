@@ -68,6 +68,7 @@ class AmazonFreshProvider(BaseProvider):
             or "validateCaptcha" in html
             or "Type the characters you see in this image" in html
             or "Sorry, we just need to make sure you're not a robot" in html
+            or "api-services-support@amazon.com" in html
         ):
             raise BotBlockedError("Amazon returned Robot Check / CAPTCHA challenge page")
 
@@ -229,13 +230,42 @@ class AmazonFreshProvider(BaseProvider):
         pincode: str = "",
     ) -> PriceQuote:
         html = ""
-        # 1. Try Playwright browser pool if available (required for hyperlocal Amazon Fresh pincode)
+
+        # 1. Primary fast-path: Mobile PDP via curl_cffi Chrome TLS impersonation (if no custom pincode needed)
+        if not pincode:
+            try:
+                from curl_cffi.requests import AsyncSession
+                mobile_url = f"https://www.amazon.in/gp/aw/d/{external_product_id}"
+                async with AsyncSession(impersonate="chrome124") as s:
+                    resp = await s.get(mobile_url, timeout=12)
+                    if resp.status_code == 200:
+                        candidate_html = resp.text
+                        if "Robot Check" not in candidate_html and "validateCaptcha" not in candidate_html:
+                            title, price_paise, mrp_paise, available, verified_pincode = self.parse_html_content(
+                                candidate_html, target_pincode=""
+                            )
+                            if price_paise is not None or not available:
+                                return PriceQuote(
+                                    external_product_id=external_product_id,
+                                    external_variant_id=external_variant_id,
+                                    price_paise=price_paise,
+                                    mrp_paise=mrp_paise,
+                                    currency="INR",
+                                    available=available,
+                                    verified_pincode=verified_pincode,
+                                    extraction_method="amazon_mobile_pdp",
+                                    raw_variant_title="Default",
+                                )
+            except Exception as cffi_err:
+                logger.debug("Mobile PDP curl_cffi fetch skipped/failed, escalating to browser", error=str(cffi_err))
+
+        # 2. Try Playwright browser pool (required for hyperlocal Amazon Fresh pincode or fallback)
         try:
             from pricewatch.providers.browser_pool import BrowserPool
             html = await BrowserPool.fetch_amazon_fresh_page(canonical_url, pincode=pincode)
         except Exception as exc:
             logger.warning("Browser fetch failed, falling back to HTTP", error=str(exc))
-            # 2. Fallback to HTTP client
+            # 3. Fallback to HTTP client
             resp = await http_client.get(canonical_url)
             if resp.status_code != 200:
                 raise ExtractionError(f"HTTP {resp.status_code} fetching {canonical_url}")

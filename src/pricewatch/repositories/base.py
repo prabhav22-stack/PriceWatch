@@ -136,3 +136,21 @@ class BaseSubscriptionRepo(ABC):
     @abstractmethod
     async def log_notification(self, notif: NotificationLog) -> Optional[int]:
         """Insert notification into outbox ledger with idempotency deduplication."""
+
+    @abstractmethod
+    async def get_pending_notifications(
+        self, limit: int = 50
+    ) -> List[Tuple[NotificationLog, Subscription, CanonicalListing]]:
+        """Fetch pending outbox alerts ready for delivery."""
+
+    @abstractmethod
+    async def mark_notification_sent(
+        self, notification_id: int, telegram_message_id: Optional[int] = None
+    ) -> None:
+        """Mark outbox alert as SENT."""
+
+    @abstractmethod
+    async def mark_notification_failed(
+        self, notification_id: int, error_detail: str, retry_count: int, retryable: bool = True
+    ) -> None:
+        """Mark outbox alert as failed or retryable."""

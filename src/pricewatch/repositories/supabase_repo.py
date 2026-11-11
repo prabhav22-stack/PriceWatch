@@ -1,6 +1,6 @@
 """Supabase / PostgreSQL repository adapter."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from supabase import Client, create_client
@@ -339,3 +339,59 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             # Duplicate key violation on idempotency_key
             logger.info("Notification deduplicated via idempotency key in DB", key=notif.idempotency_key)
             return None
+
+    async def get_pending_notifications(
+        self, limit: int = 50
+    ) -> List[Tuple[NotificationLog, Subscription, CanonicalListing]]:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            res = (
+                self.client.table("notification_log")
+                .select("*, subscriptions(*, canonical_listings(*))")
+                .in_("status", [NotificationStatus.PENDING.value, NotificationStatus.FAILED_RETRYABLE.value])
+                .lte("next_retry_at", now_iso)
+                .order("created_at")
+                .limit(limit)
+                .execute()
+            )
+            out = []
+            for row in res.data:
+                sub_data = row.pop("subscriptions", None)
+                if not sub_data:
+                    continue
+                listing_data = sub_data.pop("canonical_listings", None)
+                if not listing_data:
+                    continue
+                notif = NotificationLog(**row)
+                sub = Subscription(**sub_data)
+                listing = CanonicalListing(**listing_data)
+                out.append((notif, sub, listing))
+            return out
+        except Exception as exc:
+            logger.warning("Error fetching pending notifications from outbox", error=str(exc))
+            return []
+
+    async def mark_notification_sent(
+        self, notification_id: int, telegram_message_id: Optional[int] = None
+    ) -> None:
+        payload = {
+            "status": NotificationStatus.SENT.value,
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+            "telegram_message_id": telegram_message_id,
+        }
+        self.client.table("notification_log").update(payload).eq("id", notification_id).execute()
+
+    async def mark_notification_failed(
+        self, notification_id: int, error_detail: str, retry_count: int, retryable: bool = True
+    ) -> None:
+        status = NotificationStatus.FAILED_RETRYABLE.value if retryable else NotificationStatus.FAILED_PERMANENT.value
+        backoff_secs = min(3600, 30 * (2 ** min(retry_count, 5)))
+        next_retry = datetime.now(timezone.utc) + timedelta(seconds=backoff_secs)
+        payload = {
+            "status": status,
+            "error_detail": error_detail,
+            "retry_count": retry_count,
+            "next_retry_at": next_retry.isoformat() if retryable else None,
+        }
+        self.client.table("notification_log").update(payload).eq("id", notification_id).execute()
+

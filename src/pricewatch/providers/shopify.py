@@ -1,7 +1,8 @@
 """Universal Shopify provider for D2C brands (Nakpro, MuscleBlaze, etc.)."""
 
 import re
-from typing import List, Optional, Tuple
+import time
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from pricewatch.domain.enums import ProviderTier
@@ -33,6 +34,46 @@ class ShopifyProvider(BaseProvider):
 
     provider_code = "shopify"
     tier = ProviderTier.API_OR_JSON
+
+    _BRAND_PRODUCTS_CACHE: Dict[str, Tuple[float, Dict[str, dict]]] = {}
+
+    @classmethod
+    async def _fetch_brand_catalog(cls, domain: str) -> Optional[Dict[str, dict]]:
+        """Fetch /products.json?limit=250 once per brand and cache variants for 3 minutes."""
+        now = time.time()
+        cached = cls._BRAND_PRODUCTS_CACHE.get(domain)
+        if cached and (now - cached[0] < 180):
+            return cached[1]
+
+        url = f"https://{domain}/products.json?limit=250"
+        try:
+            resp = await http_client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                variants_map = {}
+                for prod in data.get("products", []):
+                    vendor = prod.get("vendor", domain)
+                    p_handle = prod.get("handle")
+                    for v in prod.get("variants", []):
+                        v_id = str(v.get("id"))
+                        raw_price = v.get("price")
+                        raw_mrp = v.get("compare_at_price")
+                        price_paise = parse_inr_to_paise(str(raw_price)) if raw_price is not None else None
+                        mrp_paise = parse_inr_to_paise(str(raw_mrp)) if raw_mrp is not None else None
+                        variants_map[v_id] = {
+                            "price_paise": price_paise,
+                            "mrp_paise": mrp_paise,
+                            "available": bool(v.get("available", False)),
+                            "variant_title": v.get("title"),
+                            "seller_name": vendor,
+                            "handle": p_handle,
+                            "updated_at": v.get("updated_at"),
+                        }
+                cls._BRAND_PRODUCTS_CACHE[domain] = (now, variants_map)
+                return variants_map
+        except Exception:
+            pass
+        return None
 
     @classmethod
     def can_handle(cls, url: str) -> bool:
@@ -145,6 +186,25 @@ class ShopifyProvider(BaseProvider):
         pincode: str = "",
     ) -> PriceQuote:
         domain, handle, _ = self._extract_handle_and_domain(canonical_url)
+
+        # 1. Single-request brand catalog delta check (avoids polling 40 individual product URLs)
+        catalog = await self._fetch_brand_catalog(domain)
+        if catalog and str(external_variant_id) in catalog:
+            item = catalog[str(external_variant_id)]
+            return PriceQuote(
+                external_product_id=handle,
+                external_variant_id=str(external_variant_id),
+                price_paise=item["price_paise"],
+                mrp_paise=item["mrp_paise"],
+                currency="INR",
+                available=item["available"],
+                verified_pincode="",
+                extraction_method="shopify_catalog_delta",
+                seller_name=item["seller_name"],
+                raw_variant_title=item["variant_title"],
+            )
+
+        # 2. Fallback to individual /products/{handle}.js endpoint
         data = await self._fetch_product_json(domain, handle)
 
         raw_variants = data.get("variants", [])
