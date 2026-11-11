@@ -106,4 +106,114 @@ async def run_outbox_drainer(
     repo: BaseSubscriptionRepo, bot: Any, interval_seconds: float = 2.0
 ) -> None:
     drainer = OutboxDrainer(repo=repo, bot=bot, drain_interval_seconds=interval_seconds)
-    await drainer.run_loop()
+    # Also attach client if repository has Supabase client for alert_outbox table
+    client = getattr(repo, "client", None)
+    service = OutboxDrainerService(bot=bot, client=client) if client else None
+    if service:
+        service.start()
+    try:
+        await drainer.run_loop()
+    finally:
+        if service:
+            await service.stop()
+
+
+class OutboxDrainerService:
+    """Drains public.alert_outbox via the atomic claim_outbox_alerts RPC."""
+
+    def __init__(self, bot: Any, client: Any, rate_limit_per_second: float = 25.0):
+        self.bot = bot
+        self.client = client
+        self.global_limiter = AsyncLimiter(max_rate=rate_limit_per_second, time_period=1.0)
+        self._running = False
+        self._task: Optional[asyncio.Task] = None
+
+    def start(self) -> None:
+        if not self._running:
+            self._running = True
+            self._task = asyncio.create_task(self._drain_loop(), name="outbox_drainer_service")
+            logger.info("OutboxDrainerService started (alert_outbox RPC).")
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+
+    async def _drain_loop(self) -> None:
+        while self._running:
+            try:
+                if not self.client or not hasattr(self.client, "rpc"):
+                    await asyncio.sleep(2.0)
+                    continue
+
+                resp = self.client.rpc("claim_outbox_alerts", {"p_batch_size": 50}).execute()
+                rows = resp.data or []
+
+                if not rows:
+                    await asyncio.sleep(2.0)
+                    continue
+
+                await asyncio.gather(*(self._send_single_alert(row) for row in rows))
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("Outbox drain loop error", error=str(exc))
+                await asyncio.sleep(5.0)
+
+    async def _send_single_alert(self, row: dict) -> None:
+        from datetime import timedelta
+        from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
+
+        alert_id = row["id"]
+        chat_id = row["chat_id"]
+        text = row["message_html"]
+        photo_url = row.get("photo_url")
+        markup_data = row.get("reply_markup")
+        reply_markup = InlineKeyboardMarkup.de_json(markup_data, self.bot) if markup_data else None
+
+        async with self.global_limiter:
+            try:
+                if photo_url:
+                    await self.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo_url,
+                        caption=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                    )
+                else:
+                    await self.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=False,
+                    )
+                self.client.table("alert_outbox").delete().eq("id", alert_id).execute()
+
+            except RetryAfter as e:
+                retry_at = (datetime.now(timezone.utc) + timedelta(seconds=e.retry_after + 1)).isoformat()
+                self.client.table("alert_outbox").update({
+                    "status": "PENDING",
+                    "next_attempt_at": retry_at,
+                    "last_error": f"429 RetryAfter {e.retry_after}s",
+                }).eq("id", alert_id).execute()
+
+            except (Forbidden, BadRequest) as e:
+                self.client.table("alert_outbox").update({
+                    "status": "FAILED",
+                    "last_error": str(e),
+                }).eq("id", alert_id).execute()
+
+            except TelegramError as e:
+                backoff_sec = 15 * (2 ** row.get("attempts", 1))
+                retry_at = (datetime.now(timezone.utc) + timedelta(seconds=backoff_sec)).isoformat()
+                self.client.table("alert_outbox").update({
+                    "status": "PENDING",
+                    "next_attempt_at": retry_at,
+                    "last_error": str(e),
+                }).eq("id", alert_id).execute()
+            except Exception as generic_err:
+                logger.warning("Generic alert send error", error=str(generic_err))
+

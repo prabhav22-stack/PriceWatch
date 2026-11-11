@@ -67,6 +67,7 @@ class TelegramWebhookHandler(tornado.web.RequestHandler):
             await self.ptb_app.update_queue.put(update)
             self.set_status(200)
             self.write("OK")
+            self.finish()
         except Exception as exc:
             logger.error("Failed to process Telegram webhook update", error=str(exc))
             self.set_status(400)

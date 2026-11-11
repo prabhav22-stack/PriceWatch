@@ -344,3 +344,66 @@ async def test_shopify_brand_catalog_delta_caching():
         assert mock_get.call_count == 1  # Only 1 request made for both checks!
 
 
+@pytest.mark.asyncio
+async def test_outbox_drainer_service_rpc_flow():
+    """Verify OutboxDrainerService processes rows from claim_outbox_alerts RPC."""
+    from pricewatch.services.outbox_drainer import OutboxDrainerService
+
+    mock_client = MagicMock()
+    mock_rpc_resp = MagicMock()
+    mock_rpc_resp.data = [
+        {
+            "id": "alert-uuid-1",
+            "chat_id": 123456789,
+            "message_html": "<b>Price Alert!</b> Drop to ₹1,499",
+            "photo_url": None,
+            "reply_markup": None,
+            "attempts": 0,
+        }
+    ]
+    mock_client.rpc.return_value.execute.return_value = mock_rpc_resp
+
+    mock_delete = MagicMock()
+    mock_client.table.return_value.delete.return_value.eq.return_value.execute = mock_delete
+
+    mock_bot = AsyncMock()
+    service = OutboxDrainerService(bot=mock_bot, client=mock_client, rate_limit_per_second=50)
+
+    # Process single batch
+    await service._send_single_alert(mock_rpc_resp.data[0])
+
+    mock_bot.send_message.assert_called_once()
+    mock_client.table.assert_called_with("alert_outbox")
+
+
+def test_quickchart_url_generation():
+    """Verify ChartService generates zero-CPU QuickChart URL with correct encoding."""
+    from datetime import datetime, timezone
+    from pricewatch.services.chart_service import ChartService
+    from pricewatch.domain.models import CanonicalListing, PriceObservation
+
+    listing = CanonicalListing(
+        id=99,
+        provider_code="nakpro",
+        external_product_id="prod",
+        external_variant_id="var",
+        canonical_url="https://example.com",
+        product_title="Test Product",
+        last_price_paise=150000,
+    )
+    obs = [
+        PriceObservation(
+            listing_id=99,
+            price_paise=150000,
+            available=True,
+            extraction_method="test",
+            observed_at=datetime.now(timezone.utc),
+        )
+    ]
+    url = ChartService.generate_quickchart_url(listing, obs)
+    assert url is not None
+    assert "https://quickchart.io/chart?c=" in url
+    assert "bkg=%230f172a" in url
+
+
+

@@ -1,0 +1,67 @@
+name: Tier 3 Heavy Scraper & Render Keep-Alive
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Runs every 15 minutes
+  workflow_dispatch:        # Allows manual trigger from GitHub UI
+  repository_dispatch:      # Allows triggering via Supabase pg_net webhook
+    types: [run-tier3-scraper]
+
+concurrency:
+  group: tier3-scraper-worker
+  cancel-in-progress: false # Let current batch finish before starting another
+
+jobs:
+  scrape-tier3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8      # Hard ceiling so hung browsers never burn quota
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      RENDER_HEALTH_URL: ${{ secrets.RENDER_HEALTH_URL }}
+
+    steps:
+      - name: Wake up Render Web Server (Keep-Alive Ping)
+        run: |
+          if [ -n "$RENDER_HEALTH_URL" ]; then
+            curl -fsS --max-time 10 --retry 2 "$RENDER_HEALTH_URL" || true
+          fi
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      - name: Cache Playwright Chromium Binary
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt') }}
+
+      - name: Install Playwright Chromium (Only on Cache Miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: playwright install --with-deps chromium
+
+      - name: Install Playwright OS Dependencies (On Cache Hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: playwright install-deps chromium
+
+      - name: Run Tier 3 Worker CLI
+        run: |
+          python -m pricewatch.entrypoints.worker_cli \
+            --tier TIER_3 \
+            --batch-size 25 \
+            --worker-id "gha-${{ github.run_id }}"

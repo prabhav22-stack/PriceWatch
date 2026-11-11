@@ -39,6 +39,66 @@ class ChartService:
         )
 
     @staticmethod
+    def generate_quickchart_url(
+        listing: CanonicalListing,
+        observations: List[PriceObservation],
+        target_price_paise: Optional[int] = None,
+    ) -> Optional[str]:
+        """
+        Generate a hosted QuickChart.io URL for instant, zero-CPU chart rendering.
+        Telegram servers fetch and render the image directly, requiring 0MB RAM on Render.
+        """
+        valid_obs = [
+            o for o in observations
+            if o.price_paise is not None and o.observed_at is not None
+        ]
+        if not valid_obs and listing.last_price_paise is not None:
+            valid_obs = [
+                PriceObservation(
+                    listing_id=listing.id or 0,
+                    price_paise=listing.last_price_paise,
+                    available=True,
+                    extraction_method="current",
+                    observed_at=datetime.now(timezone.utc),
+                )
+            ]
+        if not valid_obs:
+            return None
+
+        valid_obs.sort(key=lambda o: o.observed_at)
+        labels = [o.observed_at.strftime("%d %b") for o in valid_obs][-15:]
+        data = [round(o.price_paise / 100.0, 2) for o in valid_obs][-15:]
+
+        import json
+        import urllib.parse
+
+        chart_config = {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": "Price (₹)",
+                        "data": data,
+                        "borderColor": "#38bdf8",
+                        "backgroundColor": "rgba(56, 189, 248, 0.2)",
+                        "fill": True,
+                        "tension": 0.3,
+                    }
+                ],
+            },
+            "options": {
+                "legend": {"labels": {"fontColor": "#f8fafc"}},
+                "scales": {
+                    "yAxes": [{"ticks": {"fontColor": "#94a3b8"}}],
+                    "xAxes": [{"ticks": {"fontColor": "#94a3b8"}}],
+                },
+            },
+        }
+        encoded = urllib.parse.quote(json.dumps(chart_config))
+        return f"https://quickchart.io/chart?c={encoded}&bkg=%230f172a&w=600&h=320"
+
+    @staticmethod
     def generate_price_history_chart(
         listing: CanonicalListing,
         observations: List[PriceObservation],

@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from cachetools import TTLCache
 from supabase import Client, create_client
 
 from pricewatch.config import settings
@@ -28,6 +29,7 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
     """Production data access adapter powered by Supabase."""
 
     def __init__(self, client: Optional[Client] = None):
+        self._cache = TTLCache(maxsize=200, ttl=60)
         if client:
             self.client = client
         else:
@@ -184,6 +186,8 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
         if canonical_url:
             payload["canonical_url"] = canonical_url
         self.client.table("canonical_listings").update(payload).eq("id", listing_id).execute()
+        # Invalidate provider cache
+        self._cache.clear()
 
     async def record_observation(self, observation: PriceObservation) -> None:
         payload = {
@@ -244,6 +248,10 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
     async def get_active_listings_by_provider(
         self, provider_code: str
     ) -> List[CanonicalListing]:
+        cache_key = f"listings:provider:{provider_code}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         res = (
             self.client.table("canonical_listings")
             .select("*")
@@ -251,7 +259,9 @@ class SupabaseRepository(BaseUserRepo, BaseListingRepo, BaseSubscriptionRepo):
             .eq("is_monitored", True)
             .execute()
         )
-        return [CanonicalListing(**row) for row in res.data]
+        listings = [CanonicalListing(**row) for row in res.data]
+        self._cache[cache_key] = listings
+        return listings
 
     # --- Subscription Repo ---
     async def create_or_update_subscription(self, sub: Subscription) -> Subscription:

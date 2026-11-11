@@ -34,16 +34,24 @@ async def run_worker(
     tier: str = "HTTP",
     batch_size: int = 40,
     lease_seconds: int = 300,
+    worker_id: Optional[str] = None,
 ) -> int:
     """Run worker check batch for specified tier."""
-    worker_id = os.getenv("GITHUB_RUN_ID", f"worker-{uuid.uuid4().hex[:8]}")
+    worker_id = worker_id or os.getenv("GITHUB_RUN_ID", f"worker-{uuid.uuid4().hex[:8]}")
     logger.info("Starting PriceWatch worker run", worker_id=worker_id, tier=tier, batch_size=batch_size)
 
     # Filter tiers
-    if tier.upper() == "BROWSER":
+    t = tier.upper()
+    if t in ("BROWSER", "TIER_4"):
         min_tier = ProviderTier.BROWSER.value
         max_tier = ProviderTier.BROWSER.value
-    else:
+    elif t in ("TIER_3", "SCOPED_HTML"):
+        min_tier = ProviderTier.SCOPED_HTML.value
+        max_tier = ProviderTier.BROWSER.value
+    elif t == "ALL":
+        min_tier = ProviderTier.API_OR_JSON.value
+        max_tier = ProviderTier.BROWSER.value
+    else:  # HTTP
         min_tier = ProviderTier.API_OR_JSON.value
         max_tier = ProviderTier.SCOPED_HTML.value
 
@@ -185,9 +193,8 @@ def main():
     parser = argparse.ArgumentParser(description="PriceWatch background price check worker.")
     parser.add_argument(
         "--tier",
-        choices=["HTTP", "BROWSER"],
         default="HTTP",
-        help="Worker tier to execute (HTTP for fast store JSON/LD+JSON, BROWSER for Playwright)",
+        help="Worker tier to execute (HTTP, BROWSER, TIER_3, TIER_4, ALL)",
     )
     parser.add_argument(
         "--batch-size",
@@ -201,11 +208,22 @@ def main():
         default=300,
         help="Worker database lease lock duration in seconds",
     )
+    parser.add_argument(
+        "--worker-id",
+        type=str,
+        default=None,
+        help="Unique worker identifier string",
+    )
     args = parser.parse_args()
 
     setup_logging(log_level=settings.LOG_LEVEL)
     exit_code = asyncio.run(
-        run_worker(tier=args.tier, batch_size=args.batch_size, lease_seconds=args.lease_seconds)
+        run_worker(
+            tier=args.tier,
+            batch_size=args.batch_size,
+            lease_seconds=args.lease_seconds,
+            worker_id=args.worker_id,
+        )
     )
     sys.exit(exit_code)
 
