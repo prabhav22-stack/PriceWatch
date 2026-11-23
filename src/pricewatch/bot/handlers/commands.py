@@ -821,6 +821,7 @@ async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
             if check_res.success and check_res.quote:
                 q = check_res.quote
                 price_str = f"₹{(q.price_paise or 0) / 100:,.0f}" if q.price_paise else "N/A"
+                alt_info = ""
                 if q.available:
                     qty_str = f" ({q.inventory_quantity} units)" if q.inventory_quantity is not None else ""
                     stock_badge = f"🟢 In Stock{qty_str}"
@@ -832,7 +833,6 @@ async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     stock_badge = f"🔴 Out of Stock{time_info}"
 
                     # Cross-store in-stock check: Automatically discover if product is in stock elsewhere!
-                    alt_info = ""
                     try:
                         discovery_svc: DiscoveryService = context.bot_data.get("discovery_service") or DiscoveryService()
                         alt_deal = await discovery_svc.find_in_stock_alternative(listing)
@@ -845,7 +845,34 @@ async def check_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     except Exception:
                         pass
 
-                    results_lines.append(f"{i}. <b>{title}</b>\n   {stock_badge} | 💰 {price_str}{alt_info}")
+                results_lines.append(f"{i}. <b>{title}</b>\n   {stock_badge} | 💰 {price_str}{alt_info}")
+
+                # Persist fresh price to repo
+                try:
+                    listing_repo = context.bot_data.get("listing_repo")
+                    if listing_repo and listing.id:
+                        from datetime import datetime, timezone, timedelta
+                        from pricewatch.domain.models import PriceObservation
+                        await listing_repo.update_listing_state(
+                            listing_id=listing.id,
+                            last_price_paise=q.price_paise,
+                            last_mrp_paise=q.mrp_paise,
+                            last_available=q.available,
+                            next_check_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+                            consecutive_failures=0,
+                        )
+                        obs = PriceObservation(
+                            listing_id=listing.id,
+                            price_paise=q.price_paise,
+                            mrp_paise=q.mrp_paise,
+                            available=q.available,
+                            seller_name=q.seller_name,
+                            extraction_method=q.extraction_method,
+                            is_verified=True,
+                        )
+                        await listing_repo.record_observation(obs)
+                except Exception:
+                    pass
             else:
                 err_text = html.escape(check_res.error or "Check failed")
                 results_lines.append(f"{i}. <b>{title}</b>\n   ⚠️ Check failed: {err_text}")
