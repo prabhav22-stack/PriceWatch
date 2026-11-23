@@ -27,6 +27,10 @@ class VariantOption(BaseModel):
     image_url: Optional[str] = None
     last_in_stock_at: Optional[datetime] = None
     warehouse_stock: Optional[Dict[str, int]] = None
+    coupon_discount_paise: Optional[int] = None
+    net_effective_price_paise: Optional[int] = None
+    is_authorized_seller: bool = True
+    spiking_warning: Optional[str] = None
 
 
 class ResolutionResult(BaseModel):
@@ -61,6 +65,10 @@ class PriceQuote(BaseModel):
     last_in_stock_at: Optional[datetime] = None
     stock_updated_at: Optional[datetime] = None
     warehouse_stock: Optional[Dict[str, int]] = None
+    coupon_discount_paise: Optional[int] = None
+    net_effective_price_paise: Optional[int] = None
+    is_authorized_seller: bool = True
+    spiking_warning: Optional[str] = None
 
 
 class ValidationDecision(BaseModel):
@@ -114,6 +122,10 @@ class CanonicalListing(BaseModel):
     inventory_quantity: Optional[int] = None
     last_in_stock_at: Optional[datetime] = None
     warehouse_stock: Optional[Dict[str, int]] = None
+    coupon_discount_paise: Optional[int] = None
+    net_effective_price_paise: Optional[int] = None
+    is_authorized_seller: bool = True
+    spiking_warning: Optional[str] = None
     last_seller_name: Optional[str] = None
     last_checked_at: Optional[datetime] = None
     last_changed_at: Optional[datetime] = None

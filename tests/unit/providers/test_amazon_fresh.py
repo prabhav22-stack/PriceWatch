@@ -116,3 +116,32 @@ async def test_resolve_url_fallback_on_captcha_or_error():
         assert "Amazon Fresh Product (B08XYZ1234)" in result.product_title
         assert result.variants[0].price_paise is None
 
+
+@pytest.mark.asyncio
+async def test_fetch_quote_fallback_logs_without_name_error(monkeypatch):
+    provider = AmazonFreshProvider()
+    html_file = FIXTURES_DIR / "amazon_fresh_in_stock.html"
+    with open(html_file, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    # Force browser fetch to fail to test logger.warning and HTTP fallback
+    async def fake_fetch(*args, **kwargs):
+        raise RuntimeError("Headless browser simulation error")
+
+    from pricewatch.providers.browser_pool import BrowserPool
+    monkeypatch.setattr(BrowserPool, "fetch_amazon_fresh_page", fake_fetch)
+
+    with respx.mock(assert_all_called=False) as respx_mock:
+        respx_mock.get("https://www.amazon.in/dp/B08XYZ1234").mock(
+            return_value=httpx.Response(200, text=html)
+        )
+        quote = await provider.fetch_quote(
+            canonical_url="https://www.amazon.in/dp/B08XYZ1234",
+            external_product_id="B08XYZ1234",
+            external_variant_id="B08XYZ1234",
+            pincode="842002",
+        )
+        assert quote.price_paise == 7400
+        assert quote.available is True
+
+

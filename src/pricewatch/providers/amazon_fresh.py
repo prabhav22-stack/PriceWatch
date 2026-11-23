@@ -13,7 +13,10 @@ from pricewatch.domain.exceptions import (
     PincodeMismatchError,
 )
 from pricewatch.domain.models import PriceQuote, ResolutionResult, VariantOption
+from pricewatch.logging_setup import get_logger
 from pricewatch.providers.base import BaseProvider, ProviderRegistry
+
+logger = get_logger("amazon_fresh")
 from pricewatch.providers.http_client import http_client
 from pricewatch.validation.normalizer import parse_inr_to_paise
 

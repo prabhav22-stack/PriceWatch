@@ -83,6 +83,25 @@ class WheyFlashTextMatcher:
             ],
         })
 
+        # 5. Amino-Spiking & Maltodextrin Trap Processor
+        self.spiking_processor = KeywordProcessor(case_sensitive=False)
+        self.spiking_processor.add_keywords_from_dict({
+            "Glycine (Nitrogen Spiking)": ["glycine", "l-glycine"],
+            "Taurine (Cheap Amino Filler)": ["taurine", "l-taurine"],
+            "Maltodextrin (Cheap Carbs)": ["maltodextrin", "malto dextrin", "corn syrup solids", "glucose polymers"],
+            "Soy/Wheat Filler Blend": ["soy protein isolate", "wheat protein", "gluten blend"],
+        })
+
+    def detect_spiking_risk(self, ingredients_or_title: str) -> Optional[str]:
+        """Detect amino-spiking, cheap fillers, or maltodextrin traps."""
+        if not ingredients_or_title:
+            return None
+        matches = self.spiking_processor.extract_keywords(ingredients_or_title)
+        if matches:
+            unique_traps = list(dict.fromkeys(matches))
+            return f"🚩 Spiking Risk: Contains {', '.join(unique_traps)}"
+        return None
+
     def is_unflavoured(self, text: str) -> bool:
         """Instantly check if product is raw/unflavoured whey."""
         if not text:
