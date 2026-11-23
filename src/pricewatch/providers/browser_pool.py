@@ -41,22 +41,28 @@ class BrowserPool:
             ]
             context = await browser.new_context(
                 viewport=random.choice(viewports),
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 locale="en-IN",
                 timezone_id="Asia/Kolkata",
             )
 
-            # Abort heavy non-essential assets to reduce bandwidth and cut page load from 6s to ~800ms
+            # Abort heavy non-essential assets to reduce bandwidth and cut page load
             try:
                 await context.route(
-                    "**/*.{png,jpg,jpeg,webp,gif,svg,woff,woff2,ttf,mp4,css}",
+                    "**/*.{png,jpg,jpeg,webp,gif,svg,woff,woff2,ttf,mp4}",
                     lambda route: route.abort(),
                 )
             except Exception:
                 pass
 
             page = await context.new_page()
-            # Mask headless webdriver detection
-            await page.add_init_script("delete Object.getPrototypeOf(navigator).webdriver")
+            # Mask headless webdriver detection and stealth navigator overrides
+            await page.add_init_script("""
+                delete Object.getPrototypeOf(navigator).webdriver;
+                window.navigator.chrome = { runtime: {} };
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en-US', 'en'] });
+            """)
 
             try:
                 # 1. Navigate directly to target product page

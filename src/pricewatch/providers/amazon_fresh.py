@@ -234,33 +234,36 @@ class AmazonFreshProvider(BaseProvider):
     ) -> PriceQuote:
         html = ""
 
-        # 1. Primary fast-path: Mobile PDP via curl_cffi Chrome TLS impersonation (if no custom pincode needed)
-        if not pincode:
-            try:
-                from curl_cffi.requests import AsyncSession
-                mobile_url = f"https://www.amazon.in/gp/aw/d/{external_product_id}"
-                async with AsyncSession(impersonate="chrome124") as s:
-                    resp = await s.get(mobile_url, timeout=12)
-                    if resp.status_code == 200:
-                        candidate_html = resp.text
-                        if "Robot Check" not in candidate_html and "validateCaptcha" not in candidate_html:
-                            title, price_paise, mrp_paise, available, verified_pincode = self.parse_html_content(
-                                candidate_html, target_pincode=""
+        # 1. Primary fast-path: Mobile PDP via curl_cffi Chrome TLS impersonation
+        try:
+            from curl_cffi.requests import AsyncSession
+            mobile_url = f"https://www.amazon.in/gp/aw/d/{external_product_id}"
+            headers = {
+                "Accept-Language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Referer": "https://www.amazon.in/",
+            }
+            async with AsyncSession(impersonate="chrome124") as s:
+                resp = await s.get(mobile_url, headers=headers, timeout=12)
+                if resp.status_code == 200:
+                    candidate_html = resp.text
+                    if "Robot Check" not in candidate_html and "validateCaptcha" not in candidate_html:
+                        title, price_paise, mrp_paise, available, verified_pincode = self.parse_html_content(
+                            candidate_html, target_pincode=pincode
+                        )
+                        if price_paise is not None or not available:
+                            return PriceQuote(
+                                external_product_id=external_product_id,
+                                external_variant_id=external_variant_id,
+                                price_paise=price_paise,
+                                mrp_paise=mrp_paise,
+                                currency="INR",
+                                available=available,
+                                verified_pincode=verified_pincode or pincode,
+                                extraction_method="amazon_mobile_pdp",
+                                raw_variant_title="Default",
                             )
-                            if price_paise is not None or not available:
-                                return PriceQuote(
-                                    external_product_id=external_product_id,
-                                    external_variant_id=external_variant_id,
-                                    price_paise=price_paise,
-                                    mrp_paise=mrp_paise,
-                                    currency="INR",
-                                    available=available,
-                                    verified_pincode=verified_pincode,
-                                    extraction_method="amazon_mobile_pdp",
-                                    raw_variant_title="Default",
-                                )
-            except Exception as cffi_err:
-                logger.debug("Mobile PDP curl_cffi fetch skipped/failed, escalating to browser", error=str(cffi_err))
+        except Exception as cffi_err:
+            logger.debug("Mobile PDP curl_cffi fetch skipped/failed, escalating to browser", error=str(cffi_err))
 
         # 2. Try Playwright browser pool (required for hyperlocal Amazon Fresh pincode or fallback)
         try:
